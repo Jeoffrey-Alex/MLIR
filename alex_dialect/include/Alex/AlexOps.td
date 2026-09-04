@@ -15,4 +15,6 @@ def AddOp : Alex_Op<"add"> {
     let results = (outs
         I32:$result
     );
+
+    let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($result)";
 }

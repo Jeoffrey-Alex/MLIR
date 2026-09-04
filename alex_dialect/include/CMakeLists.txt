@@ -8,4 +8,4 @@ set(LLVM_TARGET_DEFINITIONS Alex/AlexOps.td)
 mlir_tablegen(Alex/AlexOps.h.inc -gen-op-decls)
 mlir_tablegen(Alex/AlexOps.cpp.inc -gen-op-defs)
 
-add_public_tablegen_target(AlexTblGen)
+add_public_tablegen_target(AlexIncGen)
