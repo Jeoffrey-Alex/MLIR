@@ -1,5 +1,5 @@
-#ifndef CLAC_OPS_H
-#define CALC_OPS_H
+#ifndef ALEX_OPS_H
+#define ALEX_OPS_H
 
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
