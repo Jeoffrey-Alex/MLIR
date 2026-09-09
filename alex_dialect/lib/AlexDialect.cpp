@@ -6,5 +6,5 @@
 #include "Alex/AlexDialect.cpp.inc"
 
 void alex::AlexDialect::initialize() {
-    addOperations<alex::AddOp>();
+    addOperations<alex::AddOp, alex::PractiseOp>();
 }
