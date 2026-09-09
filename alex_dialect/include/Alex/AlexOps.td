@@ -51,5 +51,3 @@ def PractiseOp : Alex_Op<"practise"> {
         Float3DTensor:$output
     );
 }
-
-

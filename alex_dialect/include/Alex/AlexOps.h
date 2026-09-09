@@ -1,6 +1,7 @@
 #ifndef ALEX_OPS_H
 #define ALEX_OPS_H
 
+#include "mlir/Bytecode/BytecodeOpInterface.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/OpDefinition.h"
