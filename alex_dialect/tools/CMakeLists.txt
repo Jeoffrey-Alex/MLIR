@@ -8,4 +8,5 @@ target_link_libraries(alex-opt
     MLIROptLib
     MLIRArithDialect
     MLIRFuncDialect
+    MLIRAlexToArith
 )
