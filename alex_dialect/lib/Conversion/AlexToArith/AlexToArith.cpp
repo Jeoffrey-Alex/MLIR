@@ -25,7 +25,7 @@ namespace
             if (llvm::isa<mlir::IntegerType>(op.getInput1().getType()))
             {
                 rewriter.replaceOpWithNewOp<mlir::arith::AddIOp>(op, adaptor.getInput1(), adaptor.getInput2());
-            }
+            }d
 
             return mlir::success();
         }
