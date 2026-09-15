@@ -17,20 +17,26 @@ namespace
 
         mlir::LogicalResult matchAndRewrite(alex::AddOp op, OpAdaptor adaptor, mlir::ConversionPatternRewriter &rewriter) const override
         {
-            // To handle Float Types
-            if (llvm::isa<mlir::FloatType>(op.getInput1().getType()))
+            // float + float
+            if ((llvm::isa<mlir::FloatType>(op.getInput1().getType())) && (llvm::isa<mlir::FloatType>(op.getInput2().getType())))
             {
                 rewriter.replaceOpWithNewOp<mlir::arith::AddFOp>(op, adaptor.getInput1(), adaptor.getInput2());
             }
-
-            // To handle Integer types
-            if (llvm::isa<mlir::IntegerType>(op.getInput1().getType()))
+            // int + int
+            else if ((llvm::isa<mlir::IntegerType>(op.getInput1().getType())) && (llvm::isa<mlir::IntegerType>(op.getInput2().getType())))
             {
                 rewriter.replaceOpWithNewOp<mlir::arith::AddIOp>(op, adaptor.getInput1(), adaptor.getInput2());
             }
-
-            if (llvm::isa<mlir::RankedTensorType>(op.getInput1().getType()))
+            // tensor + tensor
+            else if ((llvm::isa<mlir::RankedTensorType>(op.getInput1().getType())) && (llvm::isa<mlir::RankedTensorType>(op.getInput2().getType())))
             {
+                auto input1Type = llvm::cast<mlir::RankedTensorType>(op.getInput1().getType());
+                auto input2Type = llvm::cast<mlir::RankedTensorType>(op.getInput2().getType());
+
+                // Both tensors must have the same shape
+                if (input1Type != input2Type)
+                    return mlir::failure();
+
                 auto resultType = llvm::cast<mlir::RankedTensorType>(op.getResult().getType());
 
                 auto emptyTensor = mlir::tensor::EmptyOp::create(rewriter, op.getLoc(), resultType.getShape(), resultType.getElementType());
@@ -50,6 +56,15 @@ namespace
 
                 return mlir::success();
             }
+            // Unsupported combinations:
+            // int + float, float + int,
+            // int + tensor, tensor + int,
+            // float + tensor, tensor + float,
+            // tensors with different shapes
+            else
+            {
+                return mlir::failure();
+            }
 
             return mlir::success();
         }
@@ -62,20 +77,23 @@ namespace
 
         mlir::LogicalResult matchAndRewrite(alex::SubOp op, OpAdaptor adaptor, mlir::ConversionPatternRewriter &rewriter) const override
         {
-            // To handle Float Types
-            if (llvm::isa<mlir::FloatType>(op.getInput1().getType()))
+            if ((llvm::isa<mlir::FloatType>(op.getInput1().getType())) && (llvm::isa<mlir::FloatType>(op.getInput2().getType())))
             {
                 rewriter.replaceOpWithNewOp<mlir::arith::SubFOp>(op, adaptor.getInput1(), adaptor.getInput2());
             }
-
-            // To handle Integer types
-            if (llvm::isa<mlir::IntegerType>(op.getInput1().getType()))
+            else if ((llvm::isa<mlir::IntegerType>(op.getInput1().getType())) && (llvm::isa<mlir::IntegerType>(op.getInput2().getType())))
             {
                 rewriter.replaceOpWithNewOp<mlir::arith::SubIOp>(op, adaptor.getInput1(), adaptor.getInput2());
             }
-
-            if (llvm::isa<mlir::RankedTensorType>(op.getInput1().getType()))
+            else if ((llvm::isa<mlir::RankedTensorType>(op.getInput1().getType())) && (llvm::isa<mlir::RankedTensorType>(op.getInput2().getType())))
             {
+                auto input1Type = llvm::cast<mlir::RankedTensorType>(op.getInput1().getType());
+                auto input2Type = llvm::cast<mlir::RankedTensorType>(op.getInput2().getType());
+
+                // Both tensors must have the same shape
+                if (input1Type != input2Type)
+                    return mlir::failure();
+
                 auto resultType = llvm::cast<mlir::RankedTensorType>(op.getResult().getType());
 
                 auto emptyTensor = mlir::tensor::EmptyOp::create(rewriter, op.getLoc(), resultType.getShape(), resultType.getElementType());
@@ -95,6 +113,10 @@ namespace
 
                 return mlir::success();
             }
+            else
+            {
+                return mlir::failure();
+            }
 
             return mlir::success();
         }
@@ -108,19 +130,23 @@ namespace
         mlir::LogicalResult matchAndRewrite(alex::MulOp op, OpAdaptor adaptor, mlir::ConversionPatternRewriter &rewriter) const override
         {
             // To handle Float Types
-            if (llvm::isa<mlir::FloatType>(op.getInput1().getType()))
+            if ((llvm::isa<mlir::FloatType>(op.getInput1().getType())) && (llvm::isa<mlir::FloatType>(op.getInput2().getType())))
             {
                 rewriter.replaceOpWithNewOp<mlir::arith::MulFOp>(op, adaptor.getInput1(), adaptor.getInput2());
             }
-
-            // To handle Integer types
-            if (llvm::isa<mlir::IntegerType>(op.getInput1().getType()))
+            else if ((llvm::isa<mlir::IntegerType>(op.getInput1().getType())) && (llvm::isa<mlir::IntegerType>(op.getInput2().getType())))
             {
                 rewriter.replaceOpWithNewOp<mlir::arith::MulIOp>(op, adaptor.getInput1(), adaptor.getInput2());
             }
-
-            if (llvm::isa<mlir::RankedTensorType>(op.getInput1().getType()))
+            else if ((llvm::isa<mlir::RankedTensorType>(op.getInput1().getType())) && (llvm::isa<mlir::RankedTensorType>(op.getInput2().getType())))
             {
+                auto input1Type = llvm::cast<mlir::RankedTensorType>(op.getInput1().getType());
+                auto input2Type = llvm::cast<mlir::RankedTensorType>(op.getInput2().getType());
+
+                // Both tensors must have the same shape
+                if (input1Type != input2Type)
+                    return mlir::failure();
+
                 auto resultType = llvm::cast<mlir::RankedTensorType>(op.getResult().getType());
 
                 auto emptyTensor = mlir::tensor::EmptyOp::create(rewriter, op.getLoc(), resultType.getShape(), resultType.getElementType());
@@ -139,6 +165,10 @@ namespace
                 rewriter.replaceOp(op, elementwiseOp.getResults());
 
                 return mlir::success();
+            }
+            else
+            {
+                return mlir::failure();
             }
 
             return mlir::success();
