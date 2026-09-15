@@ -12,7 +12,7 @@ module {
         return %result : f32
     }
 
-    func.func@Tensor() ->   tensor<2x2xf32> {
+    func.func@Tensor() -> tensor<2x2xf32> {
         %a = "alex.constant"(){value = dense<1.0> : tensor<2x2xf32>} : () -> tensor<2x2xf32>
         %b = "alex.constant"(){value = dense<2.0> : tensor<2x2xf32>} : () -> tensor<2x2xf32>
         %c = "alex.constant"(){value = dense<3.0> : tensor<2x2xf32>} : () -> tensor<2x2xf32>
@@ -24,5 +24,4 @@ module {
 
         return %result : tensor<2x2xf32>
     }
-
 }

@@ -7,6 +7,8 @@ add_mlir_conversion_library(MLIRAlexToArith
     LINK_LIBS PUBLIC
     MLIRAlex
     MLIRArithDialect
+    MLIRLinalgDialect
+    MLIRTensorDialect
     MLIRIR
     MLIRPass
     MLIRRewrite

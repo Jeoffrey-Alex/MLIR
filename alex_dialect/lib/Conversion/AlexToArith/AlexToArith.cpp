@@ -1,6 +1,8 @@
 #include "Alex/AlexOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
@@ -25,7 +27,119 @@ namespace
             if (llvm::isa<mlir::IntegerType>(op.getInput1().getType()))
             {
                 rewriter.replaceOpWithNewOp<mlir::arith::AddIOp>(op, adaptor.getInput1(), adaptor.getInput2());
-            }d
+            }
+
+            if (llvm::isa<mlir::RankedTensorType>(op.getInput1().getType()))
+            {
+                auto resultType = llvm::cast<mlir::RankedTensorType>(op.getResult().getType());
+
+                auto emptyTensor = mlir::tensor::EmptyOp::create(rewriter, op.getLoc(), resultType.getShape(), resultType.getElementType());
+
+                auto kindAttr = mlir::linalg::ElementwiseKindAttr::get(rewriter.getContext(), mlir::linalg::ElementwiseKind::add);
+
+                auto indexingMaps = rewriter.getAffineMapArrayAttr({mlir::AffineMap::getMultiDimIdentityMap(
+                                                                        resultType.getRank(), rewriter.getContext()),
+                                                                    mlir::AffineMap::getMultiDimIdentityMap(
+                                                                        resultType.getRank(), rewriter.getContext()),
+                                                                    mlir::AffineMap::getMultiDimIdentityMap(
+                                                                        resultType.getRank(), rewriter.getContext())});
+
+                auto elementwiseOp = mlir::linalg::ElementwiseOp::create(rewriter, op.getLoc(), mlir::ValueRange{adaptor.getInput1(), adaptor.getInput2()}, mlir::ValueRange{emptyTensor}, kindAttr, indexingMaps);
+
+                rewriter.replaceOp(op, elementwiseOp.getResults());
+
+                return mlir::success();
+            }
+
+            return mlir::success();
+        }
+    };
+
+    class ConvertSubOp : public mlir::OpConversionPattern<alex::SubOp>
+    {
+    public:
+        using mlir::OpConversionPattern<alex::SubOp>::OpConversionPattern;
+
+        mlir::LogicalResult matchAndRewrite(alex::SubOp op, OpAdaptor adaptor, mlir::ConversionPatternRewriter &rewriter) const override
+        {
+            // To handle Float Types
+            if (llvm::isa<mlir::FloatType>(op.getInput1().getType()))
+            {
+                rewriter.replaceOpWithNewOp<mlir::arith::SubFOp>(op, adaptor.getInput1(), adaptor.getInput2());
+            }
+
+            // To handle Integer types
+            if (llvm::isa<mlir::IntegerType>(op.getInput1().getType()))
+            {
+                rewriter.replaceOpWithNewOp<mlir::arith::SubIOp>(op, adaptor.getInput1(), adaptor.getInput2());
+            }
+
+            if (llvm::isa<mlir::RankedTensorType>(op.getInput1().getType()))
+            {
+                auto resultType = llvm::cast<mlir::RankedTensorType>(op.getResult().getType());
+
+                auto emptyTensor = mlir::tensor::EmptyOp::create(rewriter, op.getLoc(), resultType.getShape(), resultType.getElementType());
+
+                auto kindAttr = mlir::linalg::ElementwiseKindAttr::get(rewriter.getContext(), mlir::linalg::ElementwiseKind::sub);
+
+                auto indexingMaps = rewriter.getAffineMapArrayAttr({mlir::AffineMap::getMultiDimIdentityMap(
+                                                                        resultType.getRank(), rewriter.getContext()),
+                                                                    mlir::AffineMap::getMultiDimIdentityMap(
+                                                                        resultType.getRank(), rewriter.getContext()),
+                                                                    mlir::AffineMap::getMultiDimIdentityMap(
+                                                                        resultType.getRank(), rewriter.getContext())});
+
+                auto elementwiseOp = mlir::linalg::ElementwiseOp::create(rewriter, op.getLoc(), mlir::ValueRange{adaptor.getInput1(), adaptor.getInput2()}, mlir::ValueRange{emptyTensor}, kindAttr, indexingMaps);
+
+                rewriter.replaceOp(op, elementwiseOp.getResults());
+
+                return mlir::success();
+            }
+
+            return mlir::success();
+        }
+    };
+
+    class ConvertMulOp : public mlir::OpConversionPattern<alex::MulOp>
+    {
+    public:
+        using mlir::OpConversionPattern<alex::MulOp>::OpConversionPattern;
+
+        mlir::LogicalResult matchAndRewrite(alex::MulOp op, OpAdaptor adaptor, mlir::ConversionPatternRewriter &rewriter) const override
+        {
+            // To handle Float Types
+            if (llvm::isa<mlir::FloatType>(op.getInput1().getType()))
+            {
+                rewriter.replaceOpWithNewOp<mlir::arith::MulFOp>(op, adaptor.getInput1(), adaptor.getInput2());
+            }
+
+            // To handle Integer types
+            if (llvm::isa<mlir::IntegerType>(op.getInput1().getType()))
+            {
+                rewriter.replaceOpWithNewOp<mlir::arith::MulIOp>(op, adaptor.getInput1(), adaptor.getInput2());
+            }
+
+            if (llvm::isa<mlir::RankedTensorType>(op.getInput1().getType()))
+            {
+                auto resultType = llvm::cast<mlir::RankedTensorType>(op.getResult().getType());
+
+                auto emptyTensor = mlir::tensor::EmptyOp::create(rewriter, op.getLoc(), resultType.getShape(), resultType.getElementType());
+
+                auto kindAttr = mlir::linalg::ElementwiseKindAttr::get(rewriter.getContext(), mlir::linalg::ElementwiseKind::mul);
+
+                auto indexingMaps = rewriter.getAffineMapArrayAttr({mlir::AffineMap::getMultiDimIdentityMap(
+                                                                        resultType.getRank(), rewriter.getContext()),
+                                                                    mlir::AffineMap::getMultiDimIdentityMap(
+                                                                        resultType.getRank(), rewriter.getContext()),
+                                                                    mlir::AffineMap::getMultiDimIdentityMap(
+                                                                        resultType.getRank(), rewriter.getContext())});
+
+                auto elementwiseOp = mlir::linalg::ElementwiseOp::create(rewriter, op.getLoc(), mlir::ValueRange{adaptor.getInput1(), adaptor.getInput2()}, mlir::ValueRange{emptyTensor}, kindAttr, indexingMaps);
+
+                rewriter.replaceOp(op, elementwiseOp.getResults());
+
+                return mlir::success();
+            }
 
             return mlir::success();
         }
@@ -54,13 +168,13 @@ namespace
     public:
         MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(AlexToArithPass)
 
-        //PASS name
+        // PASS name
         mlir::StringRef getArgument() const final
         {
             return "convert-alex-to-arith";
         }
 
-        //Pass Description
+        // Pass Description
         mlir::StringRef getDescription() const final
         {
             return "Lower Alex Operations to Arith operation";
@@ -69,7 +183,10 @@ namespace
         // alex.add depends on this inbuilt dialect
         void getDependentDialects(mlir::DialectRegistry &registry) const override
         {
-            registry.insert<mlir::arith::ArithDialect>();
+            registry.insert<
+                mlir::arith::ArithDialect,
+                mlir::linalg::LinalgDialect,
+                mlir::tensor::TensorDialect>();
         }
 
         // entry point of lowering pass
@@ -78,15 +195,15 @@ namespace
             mlir::MLIRContext &context = getContext();
             mlir::ModuleOp module = getOperation();
 
-            //register leagal and illegal operations fro conversion
+            // register leagal and illegal operations fro conversion
             mlir::ConversionTarget target(context);
 
-            target.addLegalDialect<mlir::arith::ArithDialect>();
+            target.addLegalDialect<mlir::arith::ArithDialect, mlir::linalg::LinalgDialect, mlir::tensor::TensorDialect>();
             target.addIllegalOp<alex::AddOp>();
 
             mlir::RewritePatternSet patterns(&context);
 
-            patterns.add<ConvertAddOp, ConvertConstOp>(&context);
+            patterns.add<ConvertAddOp, ConvertConstOp, ConvertSubOp, ConvertMulOp>(&context);
 
             if (failed(mlir::applyPartialConversion(module, target, std::move(patterns))))
             {
