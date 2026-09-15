@@ -1,3 +1,28 @@
+//RUN: alex-opt %s --convert-alex-to-arith | FileCheck %s
+
+//CHECK-LABEL: func.func @Scalar
+//CHECK: arith.constant 1.000000e+00 : f32
+//CHECK: arith.constant 2.000000e+00 : f32
+//CHECK: arith.constant 3.000000e+00 : f32
+//CHECK: arith.constant 4.000000e+00 : f32
+//CHECK: arith.mulf
+//CHECK: arith.addf
+//CHECK: arith.subf
+//CHECK: return
+
+//CHECK-LABEL: func.func @Tensor
+//CHECK: arith.constant dense<1.000000e+00> : tensor<2x2xf32>
+//CHECK: arith.constant dense<2.000000e+00> : tensor<2x2xf32>
+//CHECK: arith.constant dense<3.000000e+00> : tensor<2x2xf32>
+//CHECK: arith.constant dense<4.000000e+00> : tensor<2x2xf32>
+//CHECK: tensor.empty
+//CHECK: linalg.elementwise kind=#linalg.elementwise_kind<mul>
+//CHECK: tensor.empty
+//CHECK: linalg.elementwise kind=#linalg.elementwise_kind<add>
+//CHECK: tensor.empty
+//CHECK: linalg.elementwise kind=#linalg.elementwise_kind<sub>
+//CHECK: return
+
 module {
     func.func @Scalar() -> f32 {
         %a = "alex.constant"(){value = 1.0 : f32}:() -> f32
