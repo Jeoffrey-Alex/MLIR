@@ -10,170 +10,168 @@
 namespace
 {
     // Register patterns to lower Alex operations to Arith operations
-    class ConvertAddOp : public mlir::OpConversionPattern<alex::AddOp>
+    template <typename AlexOp, typename FloatOp, typename IntOp, mlir::linalg::ElementwiseKind ElementwiseKind>
+    class ConvertBinaryOp : public mlir::OpConversionPattern<AlexOp>
     {
     public:
-        using mlir::OpConversionPattern<alex::AddOp>::OpConversionPattern;
+        using Base = mlir::OpConversionPattern<AlexOp>;
+        using OpAdaptor = typename Base::OpAdaptor;
+        using Base::Base;
 
-        mlir::LogicalResult matchAndRewrite(alex::AddOp op, OpAdaptor adaptor, mlir::ConversionPatternRewriter &rewriter) const override
+        bool isFloat(mlir::Type type) const
         {
-            // float + float
-            if ((llvm::isa<mlir::FloatType>(op.getInput1().getType())) && (llvm::isa<mlir::FloatType>(op.getInput2().getType())))
-            {
-                rewriter.replaceOpWithNewOp<mlir::arith::AddFOp>(op, adaptor.getInput1(), adaptor.getInput2());
-            }
-            // int + int
-            else if ((llvm::isa<mlir::IntegerType>(op.getInput1().getType())) && (llvm::isa<mlir::IntegerType>(op.getInput2().getType())))
-            {
-                rewriter.replaceOpWithNewOp<mlir::arith::AddIOp>(op, adaptor.getInput1(), adaptor.getInput2());
-            }
-            // tensor + tensor
-            else if ((llvm::isa<mlir::RankedTensorType>(op.getInput1().getType())) && (llvm::isa<mlir::RankedTensorType>(op.getInput2().getType())))
-            {
-                auto input1Type = llvm::cast<mlir::RankedTensorType>(op.getInput1().getType());
-                auto input2Type = llvm::cast<mlir::RankedTensorType>(op.getInput2().getType());
+            return llvm::isa<mlir::FloatType>(type);
+        }
 
-                // Both tensors must have the same shape
-                if (input1Type != input2Type)
-                    return mlir::failure();
+        bool isInt(mlir::Type type) const
+        {
+            return llvm::isa<mlir::IntegerType>(type);
+        }
 
-                auto resultType = llvm::cast<mlir::RankedTensorType>(op.getResult().getType());
+        bool isTensor(mlir::Type type) const
+        {
+            return llvm::isa<mlir::RankedTensorType>(type);
+        }
 
-                auto emptyTensor = mlir::tensor::EmptyOp::create(rewriter, op.getLoc(), resultType.getShape(), resultType.getElementType());
-
-                auto kindAttr = mlir::linalg::ElementwiseKindAttr::get(rewriter.getContext(), mlir::linalg::ElementwiseKind::add);
-
-                auto indexingMaps = rewriter.getAffineMapArrayAttr({mlir::AffineMap::getMultiDimIdentityMap(
-                                                                        resultType.getRank(), rewriter.getContext()),
-                                                                    mlir::AffineMap::getMultiDimIdentityMap(
-                                                                        resultType.getRank(), rewriter.getContext()),
-                                                                    mlir::AffineMap::getMultiDimIdentityMap(
-                                                                        resultType.getRank(), rewriter.getContext())});
-
-                auto elementwiseOp = mlir::linalg::ElementwiseOp::create(rewriter, op.getLoc(), mlir::ValueRange{adaptor.getInput1(), adaptor.getInput2()}, mlir::ValueRange{emptyTensor}, kindAttr, indexingMaps);
-
-                rewriter.replaceOp(op, elementwiseOp.getResults());
-
-                return mlir::success();
-            }
-            // Unsupported combinations:
-            // int + float, float + int,
-            // int + tensor, tensor + int,
-            // float + tensor, tensor + float,
-            // tensors with different shapes
-            else
-            {
-                return mlir::failure();
-            }
+        // float op float
+        mlir::LogicalResult lowerFloat(AlexOp op, OpAdaptor adaptor, mlir::ConversionPatternRewriter &rewriter) const
+        {
+            rewriter.replaceOpWithNewOp<FloatOp>(op, adaptor.getInput1(), adaptor.getInput2());
 
             return mlir::success();
         }
-    };
 
-    class ConvertSubOp : public mlir::OpConversionPattern<alex::SubOp>
-    {
-    public:
-        using mlir::OpConversionPattern<alex::SubOp>::OpConversionPattern;
-
-        mlir::LogicalResult matchAndRewrite(alex::SubOp op, OpAdaptor adaptor, mlir::ConversionPatternRewriter &rewriter) const override
+        // int op int
+        mlir::LogicalResult lowerInt(AlexOp op, OpAdaptor adaptor, mlir::ConversionPatternRewriter &rewriter) const
         {
-            if ((llvm::isa<mlir::FloatType>(op.getInput1().getType())) && (llvm::isa<mlir::FloatType>(op.getInput2().getType())))
-            {
-                rewriter.replaceOpWithNewOp<mlir::arith::SubFOp>(op, adaptor.getInput1(), adaptor.getInput2());
-            }
-            else if ((llvm::isa<mlir::IntegerType>(op.getInput1().getType())) && (llvm::isa<mlir::IntegerType>(op.getInput2().getType())))
-            {
-                rewriter.replaceOpWithNewOp<mlir::arith::SubIOp>(op, adaptor.getInput1(), adaptor.getInput2());
-            }
-            else if ((llvm::isa<mlir::RankedTensorType>(op.getInput1().getType())) && (llvm::isa<mlir::RankedTensorType>(op.getInput2().getType())))
-            {
-                auto input1Type = llvm::cast<mlir::RankedTensorType>(op.getInput1().getType());
-                auto input2Type = llvm::cast<mlir::RankedTensorType>(op.getInput2().getType());
-
-                // Both tensors must have the same shape
-                if (input1Type != input2Type)
-                    return mlir::failure();
-
-                auto resultType = llvm::cast<mlir::RankedTensorType>(op.getResult().getType());
-
-                auto emptyTensor = mlir::tensor::EmptyOp::create(rewriter, op.getLoc(), resultType.getShape(), resultType.getElementType());
-
-                auto kindAttr = mlir::linalg::ElementwiseKindAttr::get(rewriter.getContext(), mlir::linalg::ElementwiseKind::sub);
-
-                auto indexingMaps = rewriter.getAffineMapArrayAttr({mlir::AffineMap::getMultiDimIdentityMap(
-                                                                        resultType.getRank(), rewriter.getContext()),
-                                                                    mlir::AffineMap::getMultiDimIdentityMap(
-                                                                        resultType.getRank(), rewriter.getContext()),
-                                                                    mlir::AffineMap::getMultiDimIdentityMap(
-                                                                        resultType.getRank(), rewriter.getContext())});
-
-                auto elementwiseOp = mlir::linalg::ElementwiseOp::create(rewriter, op.getLoc(), mlir::ValueRange{adaptor.getInput1(), adaptor.getInput2()}, mlir::ValueRange{emptyTensor}, kindAttr, indexingMaps);
-
-                rewriter.replaceOp(op, elementwiseOp.getResults());
-
-                return mlir::success();
-            }
-            else
-            {
-                return mlir::failure();
-            }
+            rewriter.replaceOpWithNewOp<IntOp>(op, adaptor.getInput1(), adaptor.getInput2());
 
             return mlir::success();
         }
-    };
 
-    class ConvertMulOp : public mlir::OpConversionPattern<alex::MulOp>
-    {
-    public:
-        using mlir::OpConversionPattern<alex::MulOp>::OpConversionPattern;
-
-        mlir::LogicalResult matchAndRewrite(alex::MulOp op, OpAdaptor adaptor, mlir::ConversionPatternRewriter &rewriter) const override
+        // int op float
+        mlir::LogicalResult lowerIntFloat(AlexOp op, OpAdaptor adaptor, mlir::ConversionPatternRewriter &rewriter) const
         {
-            // To handle Float Types
-            if ((llvm::isa<mlir::FloatType>(op.getInput1().getType())) && (llvm::isa<mlir::FloatType>(op.getInput2().getType())))
-            {
-                rewriter.replaceOpWithNewOp<mlir::arith::MulFOp>(op, adaptor.getInput1(), adaptor.getInput2());
-            }
-            else if ((llvm::isa<mlir::IntegerType>(op.getInput1().getType())) && (llvm::isa<mlir::IntegerType>(op.getInput2().getType())))
-            {
-                rewriter.replaceOpWithNewOp<mlir::arith::MulIOp>(op, adaptor.getInput1(), adaptor.getInput2());
-            }
-            else if ((llvm::isa<mlir::RankedTensorType>(op.getInput1().getType())) && (llvm::isa<mlir::RankedTensorType>(op.getInput2().getType())))
-            {
-                auto input1Type = llvm::cast<mlir::RankedTensorType>(op.getInput1().getType());
-                auto input2Type = llvm::cast<mlir::RankedTensorType>(op.getInput2().getType());
+            auto floatType = llvm::cast<mlir::FloatType>(op.getInput2().getType());
 
-                // Both tensors must have the same shape
-                if (input1Type != input2Type)
-                    return mlir::failure();
+            auto convertedInt = mlir::arith::SIToFPOp::create(rewriter, op.getLoc(), floatType, adaptor.getInput1());
 
-                auto resultType = llvm::cast<mlir::RankedTensorType>(op.getResult().getType());
-
-                auto emptyTensor = mlir::tensor::EmptyOp::create(rewriter, op.getLoc(), resultType.getShape(), resultType.getElementType());
-
-                auto kindAttr = mlir::linalg::ElementwiseKindAttr::get(rewriter.getContext(), mlir::linalg::ElementwiseKind::mul);
-
-                auto indexingMaps = rewriter.getAffineMapArrayAttr({mlir::AffineMap::getMultiDimIdentityMap(
-                                                                        resultType.getRank(), rewriter.getContext()),
-                                                                    mlir::AffineMap::getMultiDimIdentityMap(
-                                                                        resultType.getRank(), rewriter.getContext()),
-                                                                    mlir::AffineMap::getMultiDimIdentityMap(
-                                                                        resultType.getRank(), rewriter.getContext())});
-
-                auto elementwiseOp = mlir::linalg::ElementwiseOp::create(rewriter, op.getLoc(), mlir::ValueRange{adaptor.getInput1(), adaptor.getInput2()}, mlir::ValueRange{emptyTensor}, kindAttr, indexingMaps);
-
-                rewriter.replaceOp(op, elementwiseOp.getResults());
-
-                return mlir::success();
-            }
-            else
-            {
-                return mlir::failure();
-            }
+            rewriter.replaceOpWithNewOp<FloatOp>(op, convertedInt, adaptor.getInput2());
 
             return mlir::success();
         }
+
+        // float op int
+        mlir::LogicalResult lowerFloatInt(AlexOp op, OpAdaptor adaptor, mlir::ConversionPatternRewriter &rewriter) const
+        {
+            auto floatType = llvm::cast<mlir::FloatType>(op.getInput1().getType());
+
+            auto convertedInt = mlir::arith::SIToFPOp::create(rewriter, op.getLoc(), floatType, adaptor.getInput2());
+
+            rewriter.replaceOpWithNewOp<FloatOp>(op, adaptor.getInput1(), convertedInt);
+
+            return mlir::success();
+        }
+
+        mlir::LogicalResult lowerScalarTensor(AlexOp op, OpAdaptor adaptor, mlir::ConversionPatternRewriter &rewriter) const
+        {
+            auto input1Type = op.getInput1().getType();
+            auto input2Type = op.getInput2().getType();
+
+            mlir::Value tensor;
+            mlir::Value scalar;
+            mlir::RankedTensorType tensorType;
+
+            if (isTensor(input1Type))
+            {
+                tensor = adaptor.getInput1();
+                scalar = adaptor.getInput2();
+                tensorType = llvm::cast<mlir::RankedTensorType>(input1Type);
+            }
+            else
+            {
+                scalar = adaptor.getInput1();
+                tensor = adaptor.getInput2();
+                tensorType = llvm::cast<mlir::RankedTensorType>(input2Type);
+            }
+
+            auto emptyTensor = mlir::tensor::EmptyOp::create(rewriter, op.getLoc(), tensorType.getShape(), tensorType.getElementType());
+
+            auto fillOp = mlir::linalg::FillOp::create(rewriter, op.getLoc(), scalar, emptyTensor.getResult());
+
+            if (isTensor(input1Type))
+            {
+                return lowerTensor(op, tensor, fillOp.getResult(0), tensorType, rewriter);
+            }
+
+            return lowerTensor(op, fillOp.getResult(0), tensor, tensorType, rewriter);
+        }
+
+        mlir::LogicalResult lowerTensor(AlexOp op, mlir::Value input1, mlir::Value input2, mlir::RankedTensorType tensorType, mlir::ConversionPatternRewriter &rewriter) const
+        {
+            auto resultTensor = mlir::tensor::EmptyOp::create(rewriter, op.getLoc(), tensorType.getShape(), tensorType.getElementType());
+            auto kindAttr = mlir::linalg::ElementwiseKindAttr::get(rewriter.getContext(), ElementwiseKind);
+            auto identityMap = mlir::AffineMap::getMultiDimIdentityMap(tensorType.getRank(), rewriter.getContext());
+            auto indexingMaps = rewriter.getAffineMapArrayAttr({identityMap, identityMap, identityMap});
+            auto elementwiseOp = mlir::linalg::ElementwiseOp::create(rewriter, op.getLoc(), mlir::ValueRange{input1, input2}, mlir::ValueRange{resultTensor.getResult()}, kindAttr, indexingMaps);
+            rewriter.replaceOp(op, elementwiseOp.getResults());
+            return mlir::success();
+        }
+
+        // tensor + tensor
+        mlir::LogicalResult lowerTensorTensor(AlexOp op, OpAdaptor adaptor, mlir::ConversionPatternRewriter &rewriter) const
+        {
+            auto input1Type = llvm::cast<mlir::RankedTensorType>(op.getInput1().getType());
+            auto input2Type = llvm::cast<mlir::RankedTensorType>(op.getInput2().getType());
+            if (input1Type != input2Type)
+                return mlir::failure();
+            return lowerTensor(op, adaptor.getInput1(), adaptor.getInput2(), input1Type, rewriter);
+        }
+
+        // Main rewrite function
+        mlir::LogicalResult matchAndRewrite(AlexOp op, OpAdaptor adaptor, mlir::ConversionPatternRewriter &rewriter) const override
+        {
+            auto input1Type = op.getInput1().getType();
+
+            auto input2Type = op.getInput2().getType();
+
+            // float op float
+            if (isFloat(input1Type) && isFloat(input2Type))
+                return lowerFloat(op, adaptor, rewriter);
+
+            // int op int
+            if (isInt(input1Type) && isInt(input2Type))
+                return lowerInt(op, adaptor, rewriter);
+
+            // int op float
+            if (isInt(input1Type) && isFloat(input2Type))
+                return lowerIntFloat(op, adaptor, rewriter);
+
+            // float op int
+            if (isFloat(input1Type) && isInt(input2Type))
+                return lowerFloatInt(op, adaptor, rewriter);
+
+            // int or float op tensor
+            if ((isInt(input1Type) || isFloat(input1Type)) && isTensor(input2Type))
+                return lowerScalarTensor(op, adaptor, rewriter);
+
+            // tensor op int or float
+            if (isTensor(input1Type) && (isInt(input2Type) || isFloat(input2Type)))
+                return lowerScalarTensor(op, adaptor, rewriter);
+
+            // tensor op tensor
+            if (isTensor(input1Type) && isTensor(input2Type))
+                return lowerTensorTensor(op, adaptor, rewriter);
+
+            return mlir::failure();
+        }
     };
+
+    using ConvertAddOp = ConvertBinaryOp<alex::AddOp, mlir::arith::AddFOp, mlir::arith::AddIOp, mlir::linalg::ElementwiseKind::add>;
+
+    using ConvertSubOp = ConvertBinaryOp<alex::SubOp, mlir::arith::SubFOp, mlir::arith::SubIOp, mlir::linalg::ElementwiseKind::sub>;
+
+    using ConvertMulOp = ConvertBinaryOp<alex::MulOp, mlir::arith::MulFOp, mlir::arith::MulIOp, mlir::linalg::ElementwiseKind::mul>;
 
     class ConvertConstOp : public mlir::OpConversionPattern<alex::ConstOp>
     {
