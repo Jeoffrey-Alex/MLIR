@@ -245,3 +245,8 @@ std::unique_ptr<mlir::Pass> createAlexToArithPass()
 {
     return std::make_unique<AlexToArithPass>();
 }
+
+void registerAlexToArithPass()
+{
+    mlir::PassRegistration<AlexToArithPass>();
+}
