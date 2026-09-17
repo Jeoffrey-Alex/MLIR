@@ -5,5 +5,17 @@ add_mlir_public_c_api_library(MLIRAlexCAPI
     LINK_LIBS PUBLIC
     MLIRAlex
     MLIRAlexToArith
-)
 
+    MLIRArithToLLVM
+    MLIRFuncToLLVM
+    MLIRReconcileUnrealizedCasts
+
+    MLIRIndexToLLVM
+    MLIRMemRefToLLVM
+    MLIRSCFToControlFlow
+
+    MLIRTensorTransforms
+    MLIRLinalgTransforms
+    MLIRBufferizationToMemRef
+    MLIRControlFlowToLLVM
+)

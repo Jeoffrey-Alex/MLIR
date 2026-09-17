@@ -20,6 +20,7 @@ declare_mlir_python_extension(AlexPythonSources.NanobindExtension
     ADD_TO_PARENT AlexPythonSources
     SOURCES 
         AlexExtensionNanobind.cpp
+
     EMBED_CAPI_LINK_LIBS
         MLIRCAPIIR
         MLIRCAPIArith
@@ -46,6 +47,7 @@ add_mlir_python_common_capi_library(AlexPythonCAPI
         AlexPythonSources
         MLIRPythonSources.Core
         MLIRPythonSources.Dialects.builtin
+        MLIRPythonSources.ExecutionEngine
 )
 
 add_mlir_python_modules(AlexPythonModules

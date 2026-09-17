@@ -1,6 +1,7 @@
 #include "Alex/AlexDialect.h"
 #include "Alex/AlexOps.h"
 #include "mlir/Pass/Pass.h"
+#include "mlir/InitAllPasses.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -14,6 +15,8 @@ std::unique_ptr<mlir::Pass> createAlexToArithPass();
 
 int main(int argc, char **argv)
 {
+
+    mlir::registerAllPasses();
 
     // Register the custom lowering pass.
     mlir::registerPass([]() -> std::unique_ptr<mlir::Pass>
