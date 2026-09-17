@@ -1,7 +1,6 @@
 #include "Alex-c/Dialects.h"
 #include "Alex-c/Passes.h"
 
-#include "mlir/InitAllPasses.h"
 #include "mlir-c/Dialect/Arith.h"
 #include "mlir-c/Dialect/Bufferization.h"
 #include "mlir-c/Dialect/ControlFlow.h"
@@ -16,19 +15,20 @@
 #include "mlir/Bindings/Python/IRCore.h"
 #include "mlir/Bindings/Python/Nanobind.h"
 
-
 namespace nb = nanobind;
 
-NB_MODULE(_alexDialectsNanobind, m) {
+NB_MODULE(_alexDialectsNanobind, m)
+{
   auto alexM = m.def_submodule("alex");
 
-  mlirRegisterAllPasses();
+  alexRegisterAllPasses();  
 
   alexM.def(
       "register_dialects",
       [](mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::DefaultingPyMlirContext
              context,
-         bool load) {
+         bool load)
+      {
         MlirContext ctx = context.get()->get();
 
         MlirDialectRegistry registry = mlirDialectRegistryCreate();
@@ -53,10 +53,14 @@ NB_MODULE(_alexDialectsNanobind, m) {
         mlirContextAppendDialectRegistry(ctx, registry);
         mlirDialectRegistryDestroy(registry);
 
-        if (load) {
+        if (load)
           for (MlirDialectHandle handle : handles)
             mlirDialectHandleLoadDialect(handle, ctx);
-        }
+
+        MlirDialectRegistry extRegistry = mlirDialectRegistryCreate();
+        alexRegisterAllExtensions(extRegistry);
+        mlirContextAppendDialectRegistry(ctx, extRegistry);
+        mlirDialectRegistryDestroy(extRegistry);
       },
       nb::arg("context").none() = nb::none(),
       nb::arg("load") = true);

@@ -11,6 +11,8 @@ extern "C"
 
     MLIR_DECLARE_CAPI_DIALECT_REGISTRATION(Alex, alex);
 
+    MLIR_CAPI_EXPORTED void alexRegisterAllExtensions(MlirDialectRegistry registry);
+
 #ifdef __cplusplus
 }
 #endif // __cplusplus
