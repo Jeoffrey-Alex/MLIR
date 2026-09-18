@@ -11,3 +11,6 @@ add_mlir_dialect_library(MLIRAlex
     LINK_LIBS PUBLIC
     MLIRIR
 )
+
+add_subdirectory(Conversion)
+add_subdirectory(CAPI)
