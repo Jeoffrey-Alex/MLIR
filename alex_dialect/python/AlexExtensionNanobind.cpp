@@ -18,18 +18,16 @@
 
 namespace nb = nanobind;
 
-NB_MODULE(_alexDialectsNanobind, m)
-{
+NB_MODULE(_alexDialectsNanobind, m) {
   auto alexM = m.def_submodule("alex");
 
-  alexRegisterAllPasses();  
+  alexRegisterAllPasses();
 
   alexM.def(
       "register_dialects",
       [](mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::DefaultingPyMlirContext
              context,
-         bool load)
-      {
+         bool load) {
         MlirContext ctx = context.get()->get();
 
         MlirDialectRegistry registry = mlirDialectRegistryCreate();
@@ -63,6 +61,5 @@ NB_MODULE(_alexDialectsNanobind, m)
         mlirContextAppendDialectRegistry(ctx, extRegistry);
         mlirDialectRegistryDestroy(extRegistry);
       },
-      nb::arg("context").none() = nb::none(),
-      nb::arg("load") = true);
+      nb::arg("context").none() = nb::none(), nb::arg("load") = true);
 }

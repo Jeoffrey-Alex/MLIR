@@ -7,20 +7,19 @@
 
 void registerAlexToArithPass();
 
-void alexRegisterAllPasses()
-{
-    registerAlexToArithPass();
+void alexRegisterAllPasses() {
+  registerAlexToArithPass();
 
-    mlir::bufferization::registerOneShotBufferizePass();
-    mlir::registerConvertLinalgToLoopsPass();
-    mlir::registerSCFToControlFlowPass();
-    mlir::registerConvertBufferizationToMemRefPass();
+  mlir::bufferization::registerOneShotBufferizePass();
+  mlir::registerConvertLinalgToLoopsPass();
+  mlir::registerSCFToControlFlowPass();
+  mlir::registerConvertBufferizationToMemRefPass();
 
-    mlir::registerArithToLLVMConversionPass();
-    mlir::registerConvertIndexToLLVMPass();
-    mlir::registerFinalizeMemRefToLLVMConversionPass();
-    mlir::registerConvertControlFlowToLLVMPass();
+  mlir::registerArithToLLVMConversionPass();
+  mlir::registerConvertIndexToLLVMPass();
+  mlir::registerFinalizeMemRefToLLVMConversionPass();
+  mlir::registerConvertControlFlowToLLVMPass();
 
-    mlir::registerConvertFuncToLLVMPass();
-    mlir::registerReconcileUnrealizedCastsPass();
+  mlir::registerConvertFuncToLLVMPass();
+  mlir::registerReconcileUnrealizedCastsPass();
 }
