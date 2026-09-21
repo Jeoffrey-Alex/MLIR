@@ -5,13 +5,12 @@
 #include "mlir-c/Support.h"
 
 #ifdef __cplusplus
-extern "C"
-{
+extern "C" {
 #endif
 
-    MLIR_DECLARE_CAPI_DIALECT_REGISTRATION(Alex, alex);
+MLIR_DECLARE_CAPI_DIALECT_REGISTRATION(Alex, alex);
 
-    MLIR_CAPI_EXPORTED void alexRegisterAllExtensions(MlirDialectRegistry registry);
+MLIR_CAPI_EXPORTED void alexRegisterAllExtensions(MlirDialectRegistry registry);
 
 #ifdef __cplusplus
 }
