@@ -8,10 +8,20 @@
 #include "mlir/Transforms/DialectConversion.h"
 
 namespace {
+<<<<<<< HEAD
 // Register patterns to lower Alex operations to Arith operations
 template <typename AlexOp, typename FloatOp, typename IntOp,
           mlir::linalg::ElementwiseKind ElementwiseKind>
 class ConvertBinaryOp : public mlir::OpConversionPattern<AlexOp> {
+=======
+// Conversion pattern for the add, mul,sub operations
+// op can be add or mul or sub
+class ConvertAddcmulOp
+    : public mlir::OpConversionPattern<alex::AddcmulOp> template <
+          typename AlexOp, typename FloatOp, typename IntOp,
+          mlir::linalg::ElementwiseKind ElementwiseKind>
+      class ConvertBinaryOp : public mlir::OpConversionPattern<AlexOp> {
+>>>>>>> b31faa6 (temp commit)
 public:
   using Base = mlir::OpConversionPattern<AlexOp>;
   using OpAdaptor = typename Base::OpAdaptor;
