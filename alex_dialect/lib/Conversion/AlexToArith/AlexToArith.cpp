@@ -3,9 +3,11 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Traits.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
+#include <functional>
 
 namespace {
 // Register patterns to lower Alex operations to Arith operations
@@ -258,56 +260,119 @@ public:
         llvm::cast<mlir::RankedTensorType>(op.getTensor1().getType());
     mlir::RankedTensorType tensor2 =
         llvm::cast<mlir::RankedTensorType>(op.getTensor2().getType());
+
+    // Calculate the broadcasted shape of input and tensor1.
+    llvm::SmallVector<int64_t> broadcastShape;
+
+    if (!mlir::OpTrait::util::getBroadcastedShape(
+            input.getShape(), tensor1.getShape(), broadcastShape)) {
+      return rewriter.notifyMatchFailure(
+          op, "input and tensor1 shapes are not broadcastable");
+    }
+
+    // Calculate the broadcasted shape with tensor2.
+    llvm::SmallVector<int64_t> finalShape;
+
+    if (!mlir::OpTrait::util::getBroadcastedShape(
+            broadcastShape, tensor2.getShape(), finalShape)) {
+      return rewriter.notifyMatchFailure(
+          op, "input, tensor1 and tensor2 shapes are not broadcastable");
+    }
+
     mlir::FloatAttr valueAttr = llvm::cast<mlir::FloatAttr>(op.getValueAttr());
 
-    // create an empty tensor with same shape and type as input
+    // Create an identity map for the final broadcasted shape.
+    mlir::AffineMap identityMap = mlir::AffineMap::getMultiDimIdentityMap(
+        finalShape.size(), rewriter.getContext());
+
+    // Create an indexing map for a broadcasted operand.
+    std::function<mlir::AffineMap(mlir::ArrayRef<int64_t>)> getBroadcastMap =
+        [&](mlir::ArrayRef<int64_t> operandShape) -> mlir::AffineMap {
+      unsigned finalRank = finalShape.size();
+      unsigned operandRank = operandShape.size();
+
+      llvm::SmallVector<mlir::AffineExpr> expressions;
+
+      for (unsigned i = 0; i < operandRank; ++i) {
+        unsigned finalDim = finalRank - operandRank + i;
+
+        if (operandShape[i] == 1) {
+          expressions.push_back(
+              mlir::getAffineConstantExpr(0, rewriter.getContext()));
+        } else {
+          expressions.push_back(
+              mlir::getAffineDimExpr(finalDim, rewriter.getContext()));
+        }
+      }
+
+      return mlir::AffineMap::get(finalRank, 0, expressions,
+                                  rewriter.getContext());
+    };
+
+    mlir::AffineMap inputMap = getBroadcastMap(input.getShape());
+    mlir::AffineMap tensor1Map = getBroadcastMap(tensor1.getShape());
+    mlir::AffineMap tensor2Map = getBroadcastMap(tensor2.getShape());
+
+    // Create an empty tensor with the final broadcasted shape.
     mlir::tensor::EmptyOp emptyTensor = mlir::tensor::EmptyOp::create(
-        rewriter, op.getLoc(), input.getShape(), input.getElementType());
-    // convert scalar value into arith constant
+        rewriter, op.getLoc(), finalShape, input.getElementType());
+
+    // Convert scalar value into arith constant.
     mlir::arith::ConstantOp value =
         mlir::arith::ConstantOp::create(rewriter, op.getLoc(), valueAttr);
-    // fill the scalar value into a tensor
+
+    // Fill the scalar value into a tensor.
     mlir::linalg::FillOp valueTensor = mlir::linalg::FillOp::create(
         rewriter, op.getLoc(), value.getResult(), emptyTensor.getResult());
 
-    // tensor1*tensor2
+    // tensor1 * tensor2
     mlir::tensor::EmptyOp emptyMulTensor = mlir::tensor::EmptyOp::create(
-        rewriter, op.getLoc(), input.getShape(), input.getElementType());
+        rewriter, op.getLoc(), finalShape, input.getElementType());
+
     mlir::linalg::ElementwiseKindAttr mulKind =
         mlir::linalg::ElementwiseKindAttr::get(
             rewriter.getContext(), mlir::linalg::ElementwiseKind::mul);
-    mlir::AffineMap identityMap = mlir::AffineMap::getMultiDimIdentityMap(
-        input.getRank(), rewriter.getContext());
-    mlir::ArrayAttr indexingMaps =
-        rewriter.getAffineMapArrayAttr({identityMap, identityMap, identityMap});
-    // perform tensor1*tensor2
+
+    mlir::ArrayAttr mulIndexingMaps =
+        rewriter.getAffineMapArrayAttr({tensor1Map, tensor2Map, identityMap});
+
+    // Perform tensor1 * tensor2.
     mlir::linalg::ElementwiseOp mul1 = mlir::linalg::ElementwiseOp::create(
         rewriter, op.getLoc(),
         mlir::ValueRange{adaptor.getTensor1(), adaptor.getTensor2()},
-        mlir::ValueRange{emptyMulTensor.getResult()}, mulKind, indexingMaps);
+        mlir::ValueRange{emptyMulTensor.getResult()}, mulKind, mulIndexingMaps);
 
-    //  value * (tensor1 * tensor2)
-    // create the tensor for the second multiplication
+    // value * (tensor1 * tensor2)
     mlir::tensor::EmptyOp emptyMul2Tensor = mlir::tensor::EmptyOp::create(
-        rewriter, op.getLoc(), input.getShape(), input.getElementType());
+        rewriter, op.getLoc(), finalShape, input.getElementType());
+
+    mlir::ArrayAttr mul2IndexingMaps =
+        rewriter.getAffineMapArrayAttr({identityMap, identityMap, identityMap});
+
     mlir::linalg::ElementwiseOp mul2 = mlir::linalg::ElementwiseOp::create(
         rewriter, op.getLoc(),
         mlir::ValueRange{valueTensor.getResult(0), mul1.getResult(0)},
-        mlir::ValueRange{emptyMul2Tensor.getResult()}, mulKind, indexingMaps);
-    mlir::tensor::EmptyOp emptyResultTensor = mlir::tensor::EmptyOp::create(
-        rewriter, op.getLoc(), input.getShape(), input.getElementType());
+        mlir::ValueRange{emptyMul2Tensor.getResult()}, mulKind,
+        mul2IndexingMaps);
 
     // input + (value * tensor1 * tensor2)
+    mlir::tensor::EmptyOp emptyResultTensor = mlir::tensor::EmptyOp::create(
+        rewriter, op.getLoc(), finalShape, input.getElementType());
+
     mlir::linalg::ElementwiseKindAttr addKind =
         mlir::linalg::ElementwiseKindAttr::get(
             rewriter.getContext(), mlir::linalg::ElementwiseKind::add);
+
+    mlir::ArrayAttr addIndexingMaps =
+        rewriter.getAffineMapArrayAttr({inputMap, identityMap, identityMap});
+
     mlir::linalg::ElementwiseOp add = mlir::linalg::ElementwiseOp::create(
         rewriter, op.getLoc(),
         mlir::ValueRange{adaptor.getInput(), mul2.getResult(0)},
-        mlir::ValueRange{emptyResultTensor.getResult()}, addKind, indexingMaps);
+        mlir::ValueRange{emptyResultTensor.getResult()}, addKind,
+        addIndexingMaps);
 
-    // replace the original alex.addcmul operation with the result of the
-    // lowered lianlg operation
+    // Replace the original alex.addcmul operation.
     rewriter.replaceOp(op, add.getResults());
 
     return mlir::success();

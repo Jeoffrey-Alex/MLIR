@@ -1,2 +1,10 @@
--1.417804e-02 type_constraint.mlir
-1.086545e-02 expression.mlir
+-3.308392e-02 type_constraint.mlir
+3.260398e-02 expression.mlir
+-1.375198e-03 add_scalar.mlir
+-1.086235e-03 add_tensors.mlir
+-1.163960e-03 add_tensors1.mlir
+1.971984e-02 addcmul_1d.mlir
+1.936102e-02 addcmul_2d.mlir
+1.765203e-02 addcmul_2d_ds.mlir
+1.706719e-02 addcmul_3d.mlir
+-1.472735e-02 addcmul_ntc.mlir
