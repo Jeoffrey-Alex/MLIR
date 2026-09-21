@@ -1,3 +1,5 @@
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/Alex)
+
 set(LLVM_TARGET_DEFINITIONS Alex/AlexDialect.td)
 
 mlir_tablegen(Alex/AlexDialect.h.inc -gen-dialect-decls)
