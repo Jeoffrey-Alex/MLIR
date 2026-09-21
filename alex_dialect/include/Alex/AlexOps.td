@@ -82,3 +82,17 @@ def ConstOp : Alex_Op<"constant"> {
         ScalarOrTensor:$result
     );
 }
+
+
+def AddcmulOp : Alex_Op<"addcmul"> {
+    let arguments = (ins
+        IntOrFloatTensor: $input,
+        IntOrFloatTensor: $tensor1,
+        IntOrFloatTensor: $tensor2,
+        DefaultValuedAttr<F32Attr, "1.0">:$value
+    );
+
+    let results = (outs
+        IntOrFloatTensor:$result
+    );
+}
