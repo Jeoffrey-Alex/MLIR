@@ -223,65 +223,6 @@ using ConvertMulOp =
     ConvertBinaryOp<alex::MulOp, mlir::arith::MulFOp, mlir::arith::MulIOp,
                     mlir::linalg::ElementwiseKind::mul>;
 
-class ConvertAddcmulOp : public mlir::OpConversionPattern<alex::AddcmulOp> {
-public:
-  using mlir::OpConversionPattern<alex::AddcmulOp>::OpConversionPattern;
-
-  mlir::LogicalResult
-  matchAndRewrite(alex::AddcmulOp op, OpAdaptor adaptor,
-                  mlir::ConversionPatternRewriter &rewriter) const override {
-    auto input = llvm::cast<mlir::RankedTensorType>(op.getInput().getType());
-    auto tensor1 =
-        llvm::cast<mlir::RankedTensorType>(op.getTensor1().getType());
-    auto tensor2 =
-        llvm::cast<mlir::RankedTensorType>(op.getTensor2().getType());
-    auto valueAttr = llvm::cast<mlir::FloatAttr>(op.getValueAttr());
-
-    auto emptyTensor = mlir::tensor::EmptyOp::create(
-        rewriter, op.getLoc(), input.getShape(), input.getElementType());
-    auto value =
-        mlir::arith::ConstantOp::create(rewriter, op.getLoc(), valueAttr);
-    auto valueTensor = mlir::linalg::FillOp::create(
-        rewriter, op.getLoc(), value.getResult(), emptyTensor.getResult());
-
-    // tensor1*tensor2
-    auto emptyMulTensor = mlir::tensor::EmptyOp::create(
-        rewriter, op.getLoc(), input.getShape(), input.getElementType());
-    auto mulKind = mlir::linalg::ElementwiseKindAttr::get(
-        rewriter.getContext(), mlir::linalg::ElementwiseKind::mul);
-    auto identityMap = mlir::AffineMap::getMultiDimIdentityMap(
-        input.getRank(), rewriter.getContext());
-    auto indexingMaps =
-        rewriter.getAffineMapArrayAttr({identityMap, identityMap, identityMap});
-    auto mul1 = mlir::linalg::ElementwiseOp::create(
-        rewriter, op.getLoc(),
-        mlir::ValueRange{adaptor.getTensor1(), adaptor.getTensor2()},
-        mlir::ValueRange{emptyMulTensor.getResult()}, mulKind, indexingMaps);
-
-    // valueTensor *  mul1
-    auto emptyMul2Tensor = mlir::tensor::EmptyOp::create(
-        rewriter, op.getLoc(), input.getShape(), input.getElementType());
-    auto mul2 = mlir::linalg::ElementwiseOp::create(
-        rewriter, op.getLoc(),
-        mlir::ValueRange{valueTensor.getResult(0), mul1.getResult(0)},
-        mlir::ValueRange{emptyMul2Tensor.getResult()}, mulKind, indexingMaps);
-    auto emptyResultTensor = mlir::tensor::EmptyOp::create(
-        rewriter, op.getLoc(), input.getShape(), input.getElementType());
-
-    // add+mul2
-    auto addKind = mlir::linalg::ElementwiseKindAttr::get(
-        rewriter.getContext(), mlir::linalg::ElementwiseKind::add);
-    auto add = mlir::linalg::ElementwiseOp::create(
-        rewriter, op.getLoc(),
-        mlir::ValueRange{adaptor.getInput(), mul2.getResult(0)},
-        mlir::ValueRange{emptyResultTensor.getResult()}, addKind, indexingMaps);
-
-    rewriter.replaceOp(op, add.getResults());
-
-    return mlir::success();
-  }
-};
-
 class ConvertConstOp : public mlir::OpConversionPattern<alex::ConstOp> {
 public:
   using mlir::OpConversionPattern<alex::ConstOp>::OpConversionPattern;
@@ -337,13 +278,12 @@ public:
                          mlir::tensor::TensorDialect>();
     // Alex operations must be lowered
     target.addIllegalOp<alex::AddOp, alex::SubOp, alex::MulOp>();
-    target.addIllegalOp<alex::AddcmulOp>();
 
     mlir::RewritePatternSet patterns(&context);
 
     // Register patterns that perform the actual lowering.
-    patterns.add<ConvertAddOp, ConvertConstOp, ConvertSubOp, ConvertMulOp,
-                 ConvertAddcmulOp>(&context);
+    patterns.add<ConvertAddOp, ConvertConstOp, ConvertSubOp, ConvertMulOp>(
+        &context);
 
     // Apply the conversion and fail the pass if any illegal. Alex operation
     // could not be lowered.
