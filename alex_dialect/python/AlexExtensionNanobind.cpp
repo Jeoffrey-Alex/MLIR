@@ -11,6 +11,7 @@
 #include "mlir-c/Dialect/MemRef.h"
 #include "mlir-c/Dialect/SCF.h"
 #include "mlir-c/Dialect/Tensor.h"
+#include "mlir/InitAllPasses.h"
 
 #include "mlir/Bindings/Python/IRCore.h"
 #include "mlir/Bindings/Python/Nanobind.h"

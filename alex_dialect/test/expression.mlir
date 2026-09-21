@@ -48,7 +48,7 @@
 
 
 module {
-    func.func @Scalar() -> f32 {
+    func.func @Scalar() -> f32 attributes { llvm.emit_c_interface } {
         %a = "alex.constant"(){value = 1.0 : f32}:() -> f32
         %b = "alex.constant"(){value = 2.0 : f32}:() -> f32
         %c = "alex.constant"(){value = 3.0 : f32}:() -> f32
@@ -61,7 +61,7 @@ module {
         return %result : f32
     }
 
-    func.func@Tensor() -> tensor<2x2xf32> {
+    func.func @Tensor() -> tensor<2x2xf32> attributes { llvm.emit_c_interface } {
         %a = "alex.constant"(){value = dense<1.0> : tensor<2x2xf32>} : () -> tensor<2x2xf32>
         %b = "alex.constant"(){value = dense<2.0> : tensor<2x2xf32>} : () -> tensor<2x2xf32>
         %c = "alex.constant"(){value = dense<3.0> : tensor<2x2xf32>} : () -> tensor<2x2xf32>
@@ -74,7 +74,7 @@ module {
         return %result : tensor<2x2xf32>
     }
 
-    func.func @ScalarMixed() -> f32 {
+    func.func @ScalarMixed() -> f32 attributes { llvm.emit_c_interface } {
         %a = "alex.constant"(){value = 1 : i32} : () -> i32
         %b = "alex.constant"(){value = 2.0 : f32} : () -> f32
         %c = "alex.constant"(){value = 3.0 : f32} : () -> f32
@@ -88,7 +88,7 @@ module {
     }
 
 
-    func.func @TensorScalar() -> tensor<2x2xf32> {
+    func.func @TensorScalar() -> tensor<2x2xf32> attributes { llvm.emit_c_interface } {
         %a = "alex.constant"(){value = dense<1.0> : tensor<2x2xf32>}: () -> tensor<2x2xf32>
         %b = "alex.constant"(){value = 2.0 : f32}: () -> f32
         %c = "alex.constant"(){value = dense<3.0> : tensor<2x2xf32>}: () -> tensor<2x2xf32>
