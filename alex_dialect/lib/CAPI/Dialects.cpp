@@ -9,7 +9,8 @@
 #include "mlir/Dialect/Linalg/Transforms/BufferizableOpInterfaceImpl.h"
 #include "mlir/Dialect/Tensor/Transforms/BufferizableOpInterfaceImpl.h"
 
-void alexRegisterAllExtensions(MlirDialectRegistry registry) {
+void alexRegisterAllExtensions(MlirDialectRegistry registry)
+{
   mlir::DialectRegistry *reg = unwrap(registry);
 
   mlir::arith::registerBufferizableOpInterfaceExternalModels(*reg);

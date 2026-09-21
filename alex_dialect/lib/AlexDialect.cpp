@@ -7,5 +7,6 @@
 
 void alex::AlexDialect::initialize() {
   addOperations<alex::PractiseOp>();
-  addOperations<alex::AddOp, alex::SubOp, alex::MulOp, alex::ConstOp>();
+  addOperations<alex::AddOp, alex::SubOp, alex::MulOp, alex::ConstOp,
+                alex::AddcmulOp>();
 }
