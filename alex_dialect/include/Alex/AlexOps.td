@@ -4,6 +4,7 @@ include "Alex/AlexDialect.td"
 def IntOrFloatTensor : TensorOf<[AnyTypeOf<[AnyInteger, AnyFloat]>]>;
 def Float3DTensor : TensorRankOf<[AnyFloat], [3]>;
 def ScalarOrTensor : AnyTypeOf<[AnyFloat, AnyInteger, TensorOf<[AnyFloat, AnyInteger]>]>;
+def AnyScalarType : AnyTypeOf<[AnyFloat,AnyInteger]>;
 
 class Alex_Op<string mnemonic, list<Trait> traits = []> : Op<Alex_Dialect, mnemonic, traits>;
 
@@ -88,7 +89,26 @@ def AddcmulOp : Alex_Op<"addcmul"> {
         IntOrFloatTensor: $input,
         IntOrFloatTensor: $tensor1,
         IntOrFloatTensor: $tensor2,
-        DefaultValuedAttr<F32Attr, "1.0">:$value
+        DefaultValuedAttr<F32Attr, "1.0">:$value 
+    );
+
+    let results = (outs
+        IntOrFloatTensor:$result
+    );
+}
+
+def IntOrFloatAttr : AnyAttrOf<[I32Attr, I64Attr, F32Attr, F64Attr]> {
+    let constBuilderCall = "$0";
+}
+
+
+def RangeOp : Alex_Op<"arange"> {
+    let arguments = (ins
+        DefaultValuedAttr<IntOrFloatAttr,
+                          "$_builder.getI32IntegerAttr(0)">:$start,
+        AnyScalarType:$end,
+        DefaultValuedAttr<IntOrFloatAttr,
+                          "$_builder.getI32IntegerAttr(1)">:$step
     );
 
     let results = (outs
