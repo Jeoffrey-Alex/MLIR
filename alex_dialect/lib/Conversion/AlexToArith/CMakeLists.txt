@@ -9,6 +9,8 @@ add_mlir_conversion_library(MLIRAlexToArith
     MLIRArithDialect
     MLIRLinalgDialect
     MLIRTensorDialect
+    MLIRSCFDialect
+    MLIRMathDialect
     MLIRIR
     MLIRPass
     MLIRRewrite

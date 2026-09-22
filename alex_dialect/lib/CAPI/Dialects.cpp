@@ -7,10 +7,10 @@
 #include "mlir/Dialect/Bufferization/Transforms/BufferizableOpInterfaceImpl.h"
 #include "mlir/Dialect/Bufferization/Transforms/FuncBufferizableOpInterfaceImpl.h"
 #include "mlir/Dialect/Linalg/Transforms/BufferizableOpInterfaceImpl.h"
+#include "mlir/Dialect/SCF/Transforms/BufferizableOpInterfaceImpl.h"
 #include "mlir/Dialect/Tensor/Transforms/BufferizableOpInterfaceImpl.h"
 
-void alexRegisterAllExtensions(MlirDialectRegistry registry)
-{
+void alexRegisterAllExtensions(MlirDialectRegistry registry) {
   mlir::DialectRegistry *reg = unwrap(registry);
 
   mlir::arith::registerBufferizableOpInterfaceExternalModels(*reg);
@@ -19,6 +19,7 @@ void alexRegisterAllExtensions(MlirDialectRegistry registry)
       *reg);
   mlir::tensor::registerBufferizableOpInterfaceExternalModels(*reg);
   mlir::linalg::registerBufferizableOpInterfaceExternalModels(*reg);
+  mlir::scf::registerBufferizableOpInterfaceExternalModels(*reg);
 }
 
 MLIR_DEFINE_CAPI_DIALECT_REGISTRATION(Alex, alex, alex::AlexDialect)

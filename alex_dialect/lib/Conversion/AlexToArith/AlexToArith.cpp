@@ -2,6 +2,8 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Traits.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -379,6 +381,292 @@ public:
   }
 };
 
+// conversion pattern for arange operation
+// .arange(start = 0, end, step = 1)
+// Lowers alex.arange into standard ops (arith/math/scf/tensor)
+// size = max(0, ceil((end - start) / step))
+// out[i] = start + i * step for i in [0, size)
+class ConvertarangeOp : public mlir::OpConversionPattern<alex::RangeOp> {
+public:
+  using mlir::OpConversionPattern<alex::RangeOp>::OpConversionPattern;
+
+  mlir::LogicalResult
+  matchAndRewrite(alex::RangeOp op, OpAdaptor adaptor,
+                  mlir::ConversionPatternRewriter &rewriter) const override {
+
+    mlir::Location loc = op.getLoc();
+
+    // end is runtime value (operand)
+    mlir::Value end = op.getEnd();
+
+    // Check whether any input is float.
+    bool hasFloat = llvm::isa<mlir::FloatAttr>(op.getStartAttr()) ||
+                    llvm::isa<mlir::FloatType>(end.getType()) ||
+                    llvm::isa<mlir::FloatAttr>(op.getStepAttr());
+
+    mlir::Type elementType;
+
+    // If any of the inputs is float, output tensor is f32 or f64
+    // if all 3 inputs are int -> output tensor is i32 or i64
+    if (hasFloat) {
+      // If any input is explicitly f64, use f64 else use f32, same for int
+      bool useF64 =
+          (llvm::isa<mlir::FloatAttr>(op.getStartAttr()) &&
+           llvm::cast<mlir::FloatAttr>(op.getStartAttr()).getType().isF64()) ||
+          (llvm::isa<mlir::FloatAttr>(op.getStepAttr()) &&
+           llvm::cast<mlir::FloatAttr>(op.getStepAttr()).getType().isF64()) ||
+          (llvm::isa<mlir::FloatType>(end.getType()) &&
+           llvm::cast<mlir::FloatType>(end.getType()).isF64());
+
+      elementType = useF64 ? rewriter.getF64Type() : rewriter.getF32Type();
+    } else {
+      bool useI64 =
+          (llvm::isa<mlir::IntegerAttr>(op.getStartAttr()) &&
+           llvm::cast<mlir::IntegerAttr>(op.getStartAttr())
+               .getType()
+               .isInteger(64)) ||
+          (llvm::isa<mlir::IntegerAttr>(op.getStepAttr()) &&
+           llvm::cast<mlir::IntegerAttr>(op.getStepAttr())
+               .getType()
+               .isInteger(64)) ||
+          (llvm::isa<mlir::IntegerType>(end.getType()) &&
+           llvm::cast<mlir::IntegerType>(end.getType()).isInteger(64));
+
+      elementType = useI64 ? rewriter.getI64Type() : rewriter.getI32Type();
+    }
+
+    // Create start constant, convert it  to the chosen element type
+    mlir::TypedAttr newStartAttr;
+
+    // check if the start attribute is an integer attribute
+    if (llvm::isa<mlir::IntegerAttr>(op.getStartAttr())) {
+      int64_t value = llvm::cast<mlir::IntegerAttr>(op.getStartAttr()).getInt();
+
+      // according the chosen element type, convert it accordingly
+      // for f32 and f64
+      if (llvm::isa<mlir::FloatType>(elementType)) {
+        newStartAttr =
+            rewriter.getFloatAttr(elementType, static_cast<double>(value));
+      }
+      // for i32 and i64
+      else {
+        newStartAttr = rewriter.getIntegerAttr(elementType, value);
+      }
+    }
+    // if start is float attribute
+    else {
+      double value =
+          llvm::cast<mlir::FloatAttr>(op.getStartAttr()).getValueAsDouble();
+
+      newStartAttr = rewriter.getFloatAttr(elementType, value);
+    }
+
+    mlir::Value start =
+        mlir::arith::ConstantOp::create(rewriter, loc, newStartAttr);
+
+    // Create step constant. [same operation as start]
+    mlir::TypedAttr newStepAttr;
+
+    if (llvm::isa<mlir::IntegerAttr>(op.getStepAttr())) {
+      int64_t value = llvm::cast<mlir::IntegerAttr>(op.getStepAttr()).getInt();
+
+      if (llvm::isa<mlir::FloatType>(elementType)) {
+        newStepAttr =
+            rewriter.getFloatAttr(elementType, static_cast<double>(value));
+      } else {
+        newStepAttr = rewriter.getIntegerAttr(elementType, value);
+      }
+    } else {
+      double value =
+          llvm::cast<mlir::FloatAttr>(op.getStepAttr()).getValueAsDouble();
+
+      newStepAttr = rewriter.getFloatAttr(elementType, value);
+    }
+
+    mlir::Value step =
+        mlir::arith::ConstantOp::create(rewriter, loc, newStepAttr);
+
+    // Convert end to the selected element type, so that start, end and step are
+    // all the same type.
+    if (end.getType() != elementType) {
+
+      // int -> float
+      if (llvm::isa<mlir::IntegerType>(end.getType()) &&
+          llvm::isa<mlir::FloatType>(elementType)) {
+
+        end = mlir::arith::SIToFPOp::create(rewriter, loc, elementType, end);
+      }
+      // float -> float:: widen(f32 -> f64) or narrow(f64 -> f32)
+      else if (llvm::isa<mlir::FloatType>(end.getType()) &&
+               llvm::isa<mlir::FloatType>(elementType)) {
+
+        mlir::FloatType sourceType = llvm::cast<mlir::FloatType>(end.getType());
+
+        mlir::FloatType targetType = llvm::cast<mlir::FloatType>(elementType);
+
+        if (sourceType.getWidth() < targetType.getWidth()) {
+          end = mlir::arith::ExtFOp::create(rewriter, loc, elementType, end);
+        } else {
+          end = mlir::arith::TruncFOp::create(rewriter, loc, elementType, end);
+        }
+      }
+      // int -> int: widen (i32 -> i64) or narrow (i64 -> i32)
+      else if (llvm::isa<mlir::IntegerType>(end.getType()) &&
+               llvm::isa<mlir::IntegerType>(elementType)) {
+
+        mlir::IntegerType sourceType =
+            llvm::cast<mlir::IntegerType>(end.getType());
+
+        mlir::IntegerType targetType =
+            llvm::cast<mlir::IntegerType>(elementType);
+
+        if (sourceType.getWidth() < targetType.getWidth()) {
+          end = mlir::arith::ExtSIOp::create(rewriter, loc, elementType, end);
+        } else {
+          end = mlir::arith::TruncIOp::create(rewriter, loc, elementType, end);
+        }
+      }
+    }
+
+    // end - start
+    mlir::Value difference;
+
+    if (llvm::isa<mlir::FloatType>(elementType)) {
+      difference = mlir::arith::SubFOp::create(rewriter, loc, end, start);
+    } else {
+      difference = mlir::arith::SubIOp::create(rewriter, loc, end, start);
+    }
+
+    // Calculate number of elements:
+    // ceil((end - start) / step)
+    mlir::Value sizeValue;
+
+    // temporarily make step and difference f64, to avoid float error build-up
+    // in repeated addition
+    {
+      mlir::FloatType sizeType = rewriter.getF64Type();
+
+      mlir::Value differenceF64;
+      mlir::Value stepF64;
+
+      if (llvm::isa<mlir::FloatType>(elementType)) {
+        if (elementType != sizeType) {
+          differenceF64 =
+              mlir::arith::ExtFOp::create(rewriter, loc, sizeType, difference);
+
+          stepF64 = mlir::arith::ExtFOp::create(rewriter, loc, sizeType, step);
+        } else {
+          differenceF64 = difference;
+          stepF64 = step;
+        }
+      } else {
+        differenceF64 =
+            mlir::arith::SIToFPOp::create(rewriter, loc, sizeType, difference);
+
+        stepF64 = mlir::arith::SIToFPOp::create(rewriter, loc, sizeType, step);
+      }
+
+      mlir::Value quotient =
+          mlir::arith::DivFOp::create(rewriter, loc, differenceF64, stepF64);
+
+      mlir::Value ceilValue =
+          mlir::math::CeilOp::create(rewriter, loc, quotient);
+
+      mlir::Value zeroFloat = mlir::arith::ConstantOp::create(
+          rewriter, loc, rewriter.getF64FloatAttr(0.0));
+
+      // max(size, 0): a step pointing away from end gives an empty tensor.
+      mlir::Value sizeFloat =
+          mlir::arith::MaximumFOp::create(rewriter, loc, ceilValue, zeroFloat);
+
+      // f64 -> i64 -> index (tensor sizes and loop bounds must be `index`).
+      mlir::Value sizeI64 = mlir::arith::FPToSIOp::create(
+          rewriter, loc, rewriter.getI64Type(), sizeFloat);
+
+      sizeValue = mlir::arith::IndexCastOp::create(
+          rewriter, loc, rewriter.getIndexType(), sizeI64);
+    }
+
+    // Create tensor<? x elementType>.
+    // The size is only known at runtime, hence the dynamic dimension
+    mlir::RankedTensorType resultType =
+        mlir::RankedTensorType::get({mlir::ShapedType::kDynamic}, elementType);
+
+    // Uninitialized tensor: the loop below fills every element
+    mlir::tensor::EmptyOp emptyTensor = mlir::tensor::EmptyOp::create(
+        rewriter, loc, resultType, mlir::ValueRange{sizeValue});
+
+    // for i = 0; i < size; i++
+    mlir::Value zero = mlir::arith::ConstantIndexOp::create(rewriter, loc, 0);
+
+    mlir::Value one = mlir::arith::ConstantIndexOp::create(rewriter, loc, 1);
+
+    // The tensor is carried through the loop as an ietr_Arg, because
+    // tensor.insert returns a new tensor instead od modifying in place
+    mlir::scf::ForOp loop =
+        mlir::scf::ForOp::create(rewriter, loc, zero, sizeValue, one,
+                                 mlir::ValueRange{emptyTensor.getResult()});
+
+    {
+      mlir::OpBuilder::InsertionGuard guard(rewriter);
+
+      rewriter.setInsertionPointToStart(loop.getBody());
+
+      mlir::Value iv = loop.getInductionVar();
+
+      // Convert i from index to element type.
+      mlir::Value indexValue;
+
+      if (llvm::isa<mlir::FloatType>(elementType)) {
+
+        mlir::Value indexI64 = mlir::arith::IndexCastOp::create(
+            rewriter, loc, rewriter.getI64Type(), iv);
+
+        indexValue =
+            mlir::arith::SIToFPOp::create(rewriter, loc, elementType, indexI64);
+      } else {
+
+        indexValue =
+            mlir::arith::IndexCastOp::create(rewriter, loc, elementType, iv);
+      }
+
+      // i * step
+      mlir::Value multiplied;
+
+      if (llvm::isa<mlir::FloatType>(elementType)) {
+        multiplied =
+            mlir::arith::MulFOp::create(rewriter, loc, indexValue, step);
+      } else {
+        multiplied =
+            mlir::arith::MulIOp::create(rewriter, loc, indexValue, step);
+      }
+
+      // start + i * step
+      // multiplying avoids the error build-up of repeated float addition
+      mlir::Value value;
+
+      if (llvm::isa<mlir::FloatType>(elementType)) {
+        value = mlir::arith::AddFOp::create(rewriter, loc, start, multiplied);
+      } else {
+        value = mlir::arith::AddIOp::create(rewriter, loc, start, multiplied);
+      }
+
+      // Insert value into tensor at posiiton i
+      mlir::Value inserted = mlir::tensor::InsertOp::create(
+          rewriter, loc, value, loop.getRegionIterArgs()[0],
+          mlir::ValueRange{iv});
+
+      // pass the updated tensor to the next iteration
+      mlir::scf::YieldOp::create(rewriter, loc, inserted);
+    }
+
+    // Replace alex.arange with the tensor produced by the loop
+    rewriter.replaceOp(op, loop.getResult(0));
+
+    return mlir::success();
+  }
+};
+
 class AlexToArithPass
     : public mlir::PassWrapper<AlexToArithPass,
                                mlir::OperationPass<mlir::ModuleOp>> {
@@ -396,7 +684,8 @@ public:
   //  Register dialects used by the lowering.
   void getDependentDialects(mlir::DialectRegistry &registry) const override {
     registry.insert<mlir::arith::ArithDialect, mlir::linalg::LinalgDialect,
-                    mlir::tensor::TensorDialect>();
+                    mlir::tensor::TensorDialect, mlir::scf::SCFDialect,
+                    mlir::math::MathDialect>();
   }
 
   // entry point of lowering pass
@@ -410,16 +699,17 @@ public:
     // These dialects are allowed to remain after the conversion.
     target
         .addLegalDialect<mlir::arith::ArithDialect, mlir::linalg::LinalgDialect,
-                         mlir::tensor::TensorDialect>();
+                         mlir::tensor::TensorDialect, mlir::scf::SCFDialect,
+                         mlir::math::MathDialect>();
     // Alex operations must be lowered
-    target
-        .addIllegalOp<alex::AddOp, alex::SubOp, alex::MulOp, alex::AddcmulOp>();
+    target.addIllegalOp<alex::AddOp, alex::SubOp, alex::MulOp, alex::AddcmulOp,
+                        alex::RangeOp>();
 
     mlir::RewritePatternSet patterns(&context);
 
     // Register patterns that perform the actual lowering.
     patterns.add<ConvertAddOp, ConvertConstOp, ConvertSubOp, ConvertMulOp,
-                 ConvertAddcmulOp>(&context);
+                 ConvertAddcmulOp, ConvertarangeOp>(&context);
 
     // Apply the conversion and fail the pass if any illegal. Alex operation
     // could not be lowered.
