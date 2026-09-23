@@ -386,6 +386,27 @@ public:
 // Lowers alex.arange into standard ops (arith/math/scf/tensor)
 // size = max(0, ceil((end - start) / step))
 // out[i] = start + i * step for i in [0, size)
+
+// Lowering flow:
+// alex.arange
+//   ↓
+// Determine output element type (i32/i64/f32/f64)
+//   ↓
+// Convert start, end and step to the same type
+//   ↓
+// Compute size = max(ceil((end - start) / step), 0)
+//   ↓
+// Create tensor<? x elementType> using tensor.empty
+//   ↓
+// Create scf.for loop: i = 0 to size
+//   ↓
+// Compute value = start + i * step
+//   ↓
+// Insert value into tensor using tensor.insert
+//   ↓
+// scf.yield updated tensor to the next iteration
+//   ↓
+// Return the final tensor from scf.for
 class ConvertarangeOp : public mlir::OpConversionPattern<alex::RangeOp> {
 public:
   using mlir::OpConversionPattern<alex::RangeOp>::OpConversionPattern;
