@@ -8,3 +8,8 @@
 1.765203e-02 addcmul_2d_ds.mlir
 1.706719e-02 addcmul_3d.mlir
 -1.472735e-02 addcmul_ntc.mlir
+1.542163e-02 arange/arange.mlir
+1.628280e-02 arange/arange_1.mlir
+1.489830e-02 arange/arange_dec.mlir
+1.508284e-02 arange/arange_float_op.mlir
+1.506829e-02 arange/arange_ngtive.mlir
