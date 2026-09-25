@@ -2,11 +2,13 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Traits.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
+
 #include <functional>
 
 namespace {
@@ -379,6 +381,409 @@ public:
   }
 };
 
+// Argmin Lowering:
+
+// alex.argmin
+//   -> if dim is not present
+//      - find the minimum in the entire tensor
+//      - get it flattened index
+//      - store that index in the result tensor
+
+//   -> if dim is present
+//      - find the minimum along that dimension
+//      - loop over the remaining dimensions
+//      - get the index of the minimum
+//      - store that index in the result tensor
+//
+// Keep the reduced dimesnion with size 1 id keepdim is true
+// remove the reduced dimension if keepdim is false
+
+// scf.for -> tensor.extract -> airth.cmpi/cmpf -> arith.select -> tensor.insert
+
+class ConvertArgminOp : public mlir::OpConversionPattern<alex::ArgminOp> {
+public:
+  using mlir::OpConversionPattern<alex::ArgminOp>::OpConversionPattern;
+
+  mlir::LogicalResult
+  matchAndRewrite(alex::ArgminOp op, OpAdaptor adaptor,
+                  mlir::ConversionPatternRewriter &rewriter) const override {
+    mlir::Location loc = op.getLoc();
+
+    // Input tensor.
+    mlir::RankedTensorType input =
+        llvm::dyn_cast<mlir::RankedTensorType>(op.getInput().getType());
+
+    if (!input)
+      return rewriter.notifyMatchFailure(op, "input must be a ranked tensor");
+
+    unsigned rank = input.getRank();
+
+    // get the value of keepdim
+    mlir::BoolAttr keepdimAttr = op->getAttrOfType<mlir::BoolAttr>("keepdim");
+
+    bool keepdim = keepdimAttr && keepdimAttr.getValue();
+
+    bool isFloat = llvm::isa<mlir::FloatType>(input.getElementType());
+
+    // Common constants.
+    mlir::Value zero = mlir::arith::ConstantIndexOp::create(rewriter, loc, 0);
+
+    mlir::Value one = mlir::arith::ConstantIndexOp::create(rewriter, loc, 1);
+
+    mlir::Value zeroI64 = mlir::arith::ConstantOp::create(
+        rewriter, loc, rewriter.getI64IntegerAttr(0));
+
+    // Get the runtime size of every input dimension.
+    llvm::SmallVector<mlir::Value> inputDimSizes;
+
+    for (unsigned i = 0; i < rank; ++i) {
+      if (input.isDynamicDim(i)) {
+        // Dynamic dimension = tensor.dim
+        mlir::Value dimIndex =
+            mlir::arith::ConstantIndexOp::create(rewriter, loc, i);
+
+        mlir::Value size = mlir::tensor::DimOp::create(
+            rewriter, loc, adaptor.getInput(), dimIndex);
+
+        inputDimSizes.push_back(size);
+      } else {
+        // Static dimension = constant index
+        inputDimSizes.push_back(mlir::arith::ConstantIndexOp::create(
+            rewriter, loc, input.getDimSize(i)));
+      }
+    }
+
+    // CASE 1:
+    // dim is absent -> dim=None
+    // Reduce over the entire flattened tensor.
+    mlir::IntegerAttr dimAttr = op->getAttrOfType<mlir::IntegerAttr>("dim");
+
+    if (!dimAttr) {
+      // Check statically known zero dimensions.
+      for (unsigned i = 0; i < rank; ++i) {
+        if (!input.isDynamicDim(i) && input.getDimSize(i) == 0) {
+          return rewriter.notifyMatchFailure(op,
+                                             "cannot reduce an empty tensor");
+        }
+      }
+
+      // Build the result based on keepdim
+      llvm::SmallVector<int64_t> resultShape;
+
+      if (keepdim)
+        resultShape.assign(rank, 1);
+
+      mlir::Value emptyResult = mlir::tensor::EmptyOp::create(
+          rewriter, loc, resultShape, rewriter.getI64Type());
+
+      // Initialize the input indices to zero
+      llvm::SmallVector<mlir::Value> zeroIndices(rank, zero);
+
+      mlir::Value firstValue = mlir::tensor::ExtractOp::create(
+          rewriter, loc, adaptor.getInput(), zeroIndices);
+
+      // Recursive nested loops over ALL input dimensions, carry the minValue
+      // and minIndex
+      std::function<llvm::SmallVector<mlir::Value, 2>(
+          mlir::OpBuilder &, mlir::Location, unsigned, mlir::Value, mlir::Value,
+          llvm::SmallVectorImpl<mlir::Value> &)>
+          buildGlobalReduction;
+
+      buildGlobalReduction = [&](mlir::OpBuilder &builder,
+                                 mlir::Location bodyLoc, unsigned currentDim,
+                                 mlir::Value minValue, mlir::Value minIndex,
+                                 llvm::SmallVectorImpl<mlir::Value> &indices)
+          -> llvm::SmallVector<mlir::Value, 2> {
+        // All dimensions have been traversed.
+        // Process this single element.
+        if (currentDim == rank) {
+          mlir::Value currentValue = mlir::tensor::ExtractOp::create(
+              builder, bodyLoc, adaptor.getInput(), indices);
+
+          // Calculate flattened index.
+          // flatIndex * dimensionSize + index
+          mlir::Value flatIndex = zeroI64;
+
+          for (unsigned i = 0; i < rank; ++i) {
+            mlir::Value indexI64 = mlir::arith::IndexCastOp::create(
+                builder, bodyLoc, builder.getI64Type(), indices[i]);
+
+            mlir::Value dimSizeI64 = mlir::arith::IndexCastOp::create(
+                builder, bodyLoc, builder.getI64Type(), inputDimSizes[i]);
+
+            mlir::Value multiplied = mlir::arith::MulIOp::create(
+                builder, bodyLoc, flatIndex, dimSizeI64);
+
+            flatIndex = mlir::arith::AddIOp::create(builder, bodyLoc,
+                                                    multiplied, indexI64);
+          }
+
+          // Compare current value with current minimum.
+          mlir::Value condition;
+
+          if (isFloat) {
+            condition = mlir::arith::CmpFOp::create(
+                builder, bodyLoc, mlir::arith::CmpFPredicate::OLT, currentValue,
+                minValue);
+          } else {
+            condition = mlir::arith::CmpIOp::create(
+                builder, bodyLoc, mlir::arith::CmpIPredicate::slt, currentValue,
+                minValue);
+          }
+
+          mlir::Value newMinValue = mlir::arith::SelectOp::create(
+              builder, bodyLoc, condition, currentValue, minValue);
+
+          mlir::Value newMinIndex = mlir::arith::SelectOp::create(
+              builder, bodyLoc, condition, flatIndex, minIndex);
+
+          return {newMinValue, newMinIndex};
+        }
+
+        // Loop over current dimension.
+        mlir::scf::ForOp loop = mlir::scf::ForOp::create(
+            builder, bodyLoc, zero, inputDimSizes[currentDim], one,
+            mlir::ValueRange{minValue, minIndex},
+            [&](mlir::OpBuilder &nestedBuilder, mlir::Location nestedLoc,
+                mlir::Value inductionVariable, mlir::ValueRange iterArgs) {
+              indices.push_back(inductionVariable);
+
+              llvm::SmallVector<mlir::Value, 2> reductionResult =
+                  buildGlobalReduction(nestedBuilder, nestedLoc, currentDim + 1,
+                                       iterArgs[0], iterArgs[1], indices);
+
+              indices.pop_back();
+
+              mlir::scf::YieldOp::create(nestedBuilder, nestedLoc,
+                                         reductionResult);
+            });
+
+        return {loop.getResult(0), loop.getResult(1)};
+      };
+
+      llvm::SmallVector<mlir::Value> indices;
+
+      llvm::SmallVector<mlir::Value, 2> finalReduction =
+          buildGlobalReduction(rewriter, loc, 0, firstValue, zeroI64, indices);
+
+      // Insert final flattened index into result tensor.
+      llvm::SmallVector<mlir::Value> resultIndices;
+
+      if (keepdim)
+        resultIndices.assign(rank, zero);
+
+      mlir::Value finalResult = mlir::tensor::InsertOp::create(
+          rewriter, loc, finalReduction[1], emptyResult, resultIndices);
+
+      rewriter.replaceOp(op, finalResult);
+
+      return mlir::success();
+    }
+
+    // CASE 2:
+    // dim is specified.
+    int64_t dim = dimAttr.getInt();
+
+    // Normalize negative dimension.
+    if (dim < 0)
+      dim += rank;
+
+    if (dim < 0 || dim >= static_cast<int64_t>(rank))
+      return rewriter.notifyMatchFailure(op, "dimension is out of range");
+
+    unsigned reductionDim = static_cast<unsigned>(dim);
+
+    // Determine result shape.
+    // One output dimension exists for every non-reduced dimension.
+    llvm::SmallVector<int64_t> resultShape;
+    llvm::SmallVector<mlir::Value> dynamicSizes;
+    llvm::SmallVector<mlir::Value> outputBounds;
+
+    for (unsigned i = 0; i < rank; ++i) {
+      if (i == reductionDim) {
+        if (keepdim)
+          resultShape.push_back(1);
+
+        continue;
+      }
+
+      if (input.isDynamicDim(i)) {
+        resultShape.push_back(mlir::ShapedType::kDynamic);
+
+        dynamicSizes.push_back(inputDimSizes[i]);
+
+        outputBounds.push_back(inputDimSizes[i]);
+      } else {
+        resultShape.push_back(input.getDimSize(i));
+
+        outputBounds.push_back(inputDimSizes[i]);
+      }
+    }
+
+    // Reduction dimension size.
+    mlir::Value reductionBound = inputDimSizes[reductionDim];
+
+    if (!input.isDynamicDim(reductionDim) &&
+        input.getDimSize(reductionDim) == 0) {
+      return rewriter.notifyMatchFailure(op,
+                                         "cannot reduce an empty dimension");
+    }
+
+    // Result tensor.
+    mlir::Value emptyResult = mlir::tensor::EmptyOp::create(
+        rewriter, loc, resultShape, rewriter.getI64Type(), dynamicSizes);
+
+    // Insert the reduction index into the non-reduced indices.
+    std::function<llvm::SmallVector<mlir::Value>(llvm::ArrayRef<mlir::Value>,
+                                                 mlir::Value)>
+        insertAtReductionDim;
+    insertAtReductionDim =
+        [&](llvm::ArrayRef<mlir::Value> keptIndices,
+            mlir::Value reductionIndex) -> llvm::SmallVector<mlir::Value> {
+      llvm::SmallVector<mlir::Value> fullIndices;
+
+      fullIndices.reserve(rank);
+
+      unsigned keptPosition = 0;
+
+      for (unsigned i = 0; i < rank; ++i) {
+        if (i == reductionDim) {
+          fullIndices.push_back(reductionIndex);
+          continue;
+        }
+
+        fullIndices.push_back(keptIndices[keptPosition]);
+
+        ++keptPosition;
+      }
+
+      return fullIndices;
+    };
+
+    // Recursive loops over all non-reduced dimensions.
+    std::function<mlir::Value(mlir::OpBuilder &, mlir::Location, unsigned,
+                              mlir::Value,
+                              llvm::SmallVectorImpl<mlir::Value> &)>
+        buildOutputLoops;
+
+    buildOutputLoops =
+        [&](mlir::OpBuilder &builder, mlir::Location bodyLoc,
+            unsigned outputDim, mlir::Value currentResult,
+            llvm::SmallVectorImpl<mlir::Value> &outputIndices) -> mlir::Value {
+      // All non-reduced dimensions have been generated.
+      // Perform the reduction along `dim`.
+      if (outputDim == outputBounds.size()) {
+
+        // Start with first element along reduction dimension.
+        llvm::SmallVector<mlir::Value> firstInputIndices =
+            insertAtReductionDim(outputIndices, zero);
+
+        mlir::Value firstValue = mlir::tensor::ExtractOp::create(
+            builder, bodyLoc, adaptor.getInput(), firstInputIndices);
+
+        // First element has index 0.
+        mlir::scf::ForOp reductionLoop = mlir::scf::ForOp::create(
+            builder, bodyLoc, one, reductionBound, one,
+            mlir::ValueRange{firstValue, zeroI64},
+            [&](mlir::OpBuilder &innerBuilder, mlir::Location innerLoc,
+                mlir::Value reductionIndex, mlir::ValueRange reductionArgs) {
+              mlir::Value minValue = reductionArgs[0];
+
+              mlir::Value minIndex = reductionArgs[1];
+
+              // Read current element.
+              llvm::SmallVector<mlir::Value> currentInputIndices =
+                  insertAtReductionDim(outputIndices, reductionIndex);
+
+              mlir::Value currentValue = mlir::tensor::ExtractOp::create(
+                  innerBuilder, innerLoc, adaptor.getInput(),
+                  currentInputIndices);
+
+              // Compare.
+              mlir::Value condition;
+
+              if (isFloat) {
+                condition = mlir::arith::CmpFOp::create(
+                    innerBuilder, innerLoc, mlir::arith::CmpFPredicate::OLT,
+                    currentValue, minValue);
+              } else {
+                condition = mlir::arith::CmpIOp::create(
+                    innerBuilder, innerLoc, mlir::arith::CmpIPredicate::slt,
+                    currentValue, minValue);
+              }
+
+              // Select new minimum value.
+              mlir::Value newMinValue = mlir::arith::SelectOp::create(
+                  innerBuilder, innerLoc, condition, currentValue, minValue);
+
+              // Convert reduction index to i64.
+              mlir::Value reductionIndexI64 = mlir::arith::IndexCastOp::create(
+                  innerBuilder, innerLoc, innerBuilder.getI64Type(),
+                  reductionIndex);
+
+              // Select new minimum index.
+              mlir::Value newMinIndex = mlir::arith::SelectOp::create(
+                  innerBuilder, innerLoc, condition, reductionIndexI64,
+                  minIndex);
+
+              // Carry min value and min index.
+              mlir::scf::YieldOp::create(
+                  innerBuilder, innerLoc,
+                  mlir::ValueRange{newMinValue, newMinIndex});
+            });
+
+        mlir::Value resultIndex = reductionLoop.getResult(1);
+
+        // Output indices.
+        llvm::SmallVector<mlir::Value> resultIndices;
+
+        if (keepdim) {
+          // Insert reduction dimension with index 0.
+          resultIndices = insertAtReductionDim(outputIndices, zero);
+        } else {
+          resultIndices.assign(outputIndices.begin(), outputIndices.end());
+        }
+
+        // Insert argmin index into result.
+        return mlir::tensor::InsertOp::create(builder, bodyLoc, resultIndex,
+                                              currentResult, resultIndices)
+            .getResult();
+      }
+
+      // Loop over one non-reduced dimension.
+      mlir::Value upperBound = outputBounds[outputDim];
+
+      mlir::scf::ForOp loop = mlir::scf::ForOp::create(
+          builder, bodyLoc, zero, upperBound, one,
+          mlir::ValueRange{currentResult},
+          [&](mlir::OpBuilder &nestedBuilder, mlir::Location nestedLoc,
+              mlir::Value inductionVariable, mlir::ValueRange iterArgs) {
+            outputIndices.push_back(inductionVariable);
+
+            mlir::Value updatedResult =
+                buildOutputLoops(nestedBuilder, nestedLoc, outputDim + 1,
+                                 iterArgs[0], outputIndices);
+
+            outputIndices.pop_back();
+
+            mlir::scf::YieldOp::create(nestedBuilder, nestedLoc, updatedResult);
+          });
+
+      return loop.getResult(0);
+    };
+
+    // Generate output loops.
+    llvm::SmallVector<mlir::Value> outputIndices;
+
+    mlir::Value finalResult =
+        buildOutputLoops(rewriter, loc, 0, emptyResult, outputIndices);
+
+    rewriter.replaceOp(op, finalResult);
+
+    return mlir::success();
+  }
+};
+
 class AlexToArithPass
     : public mlir::PassWrapper<AlexToArithPass,
                                mlir::OperationPass<mlir::ModuleOp>> {
@@ -396,7 +801,7 @@ public:
   //  Register dialects used by the lowering.
   void getDependentDialects(mlir::DialectRegistry &registry) const override {
     registry.insert<mlir::arith::ArithDialect, mlir::linalg::LinalgDialect,
-                    mlir::tensor::TensorDialect>();
+                    mlir::tensor::TensorDialect, mlir::scf::SCFDialect>();
   }
 
   // entry point of lowering pass
@@ -410,16 +815,16 @@ public:
     // These dialects are allowed to remain after the conversion.
     target
         .addLegalDialect<mlir::arith::ArithDialect, mlir::linalg::LinalgDialect,
-                         mlir::tensor::TensorDialect>();
+                         mlir::tensor::TensorDialect, mlir::scf::SCFDialect>();
     // Alex operations must be lowered
-    target
-        .addIllegalOp<alex::AddOp, alex::SubOp, alex::MulOp, alex::AddcmulOp>();
+    target.addIllegalOp<alex::AddOp, alex::SubOp, alex::MulOp, alex::AddcmulOp,
+                        alex::ArgminOp>();
 
     mlir::RewritePatternSet patterns(&context);
 
     // Register patterns that perform the actual lowering.
     patterns.add<ConvertAddOp, ConvertConstOp, ConvertSubOp, ConvertMulOp,
-                 ConvertAddcmulOp>(&context);
+                 ConvertAddcmulOp, ConvertArgminOp>(&context);
 
     // Apply the conversion and fail the pass if any illegal. Alex operation
     // could not be lowered.
