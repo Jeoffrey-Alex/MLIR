@@ -32,14 +32,14 @@ MLIR_TO_CTYPE = {
     "i64": ctypes.c_int64,
 }
 
-
+# Map an MLIR type to its ctypes type
 def ctype_for(mlir_type):
     key = str(mlir_type)
     if key not in MLIR_TO_CTYPE:
         raise RuntimeError(f"Don't know the ctypes equivalent of '{key}'")
     return MLIR_TO_CTYPE[key]
 
-
+# Map an MLIR type to its ctypes type
 def make_memref_struct(rank):
     if rank == 0:
         fields = [
@@ -57,7 +57,7 @@ def make_memref_struct(rank):
         ]
     return type("MemRef", (ctypes.Structure,), {"_fields_": fields})
 
-
+# Get all functions from the MLIR module
 def get_all_funcs(module):
     funcs = []
     for op in module.body.operations:
@@ -70,7 +70,7 @@ def get_all_funcs(module):
         raise RuntimeError("No func.func found in this module")
     return funcs
 
-
+# Read tensor data using its sizes and strides
 def read_nested(data_ptr, sizes, strides, offset, dim=0, base_index=()):
     if dim == len(sizes):
         flat_index = offset + sum(i * s for i, s in zip(base_index, strides))
@@ -80,7 +80,7 @@ def read_nested(data_ptr, sizes, strides, offset, dim=0, base_index=()):
         for i in range(sizes[dim])
     ]
 
-
+# Round floating-point values
 def round_nested(value, digits=4):
     if isinstance(value, list):
         return [round_nested(v, digits) for v in value]
@@ -88,7 +88,7 @@ def round_nested(value, digits=4):
         return round(value, digits)
     return value
 
-
+# Execute the MLIR function and read the result tensor
 def run_tensor(module, func_name, rank, elem_ctype):
     ee = ExecutionEngine(module)
 
@@ -117,7 +117,7 @@ def run_tensor(module, func_name, rank, elem_ctype):
 
     return actual
 
-
+# Test the addcmul operation
 def test_addcmul():
     print("\n")
     print("=" * 60)
