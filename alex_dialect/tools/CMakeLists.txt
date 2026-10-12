@@ -9,5 +9,8 @@ target_link_libraries(alex-opt
     MLIRRegisterAllPasses
     MLIRArithDialect
     MLIRFuncDialect
+    MLIRTensorDialect
+    MLIRSCFDialect
+    MLIRMathDialect
     MLIRAlexToArith
 )
