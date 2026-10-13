@@ -144,18 +144,23 @@ def AddcmulOp : Alex_Op<"addcmul"> {
     );
 }
 
-def IntOrFloatAttr : AnyAttrOf<[I32Attr, I64Attr, F32Attr, F64Attr]> {
-    let constBuilderCall = "$0";
-}
+def addLinalgOp : Alex_Op<"addLinalg"> {
+    let summary = [{
+        Accumulates the sum of two tensors and divides by a scalar value.
+    }];
 
+    let description = [{
+        This operation takes two operands:
 
-def RangeOp : Alex_Op<"arange"> {
+        - `input1` is a tensor with integer or floating-point elements.
+        - `input2` is a tensor with integer or floating-point elements.
+
+        The result `result` is a tensor with integer or floating-point elements.
+    }];
+
     let arguments = (ins
-        DefaultValuedAttr<IntOrFloatAttr,
-                          "$_builder.getI32IntegerAttr(0)">:$start,
-        AnyScalarType:$end,
-        DefaultValuedAttr<IntOrFloatAttr,
-                          "$_builder.getI32IntegerAttr(1)">:$step
+        IntOrFloatTensor:$input1,
+        IntOrFloatTensor:$input2
     );
 
     let results = (outs
@@ -163,27 +168,51 @@ def RangeOp : Alex_Op<"arange"> {
     );
 }
 
-
-def ArgminOp: Alex_Op<"argmin"> {
-    let summary = "Returns the indices of the minimum value of a tensor";
+def addBCLinalgOp : Alex_Op<"addBCLinalg"> {
+    let summary = [{
+        Accumulates the sum of two tensors and divides by a scalar value.
+    }];
 
     let description = [{
-        This operation takes a tensor operand and an integer attribute and bool attribute.
-        
-        - 'input' is a required tensor of any type and shape.
-        - 'dim' is an optional attribute that specifies the dimension to reduce.
-        - 'keepdim' is an attribute that specifies whether the reduced dimension is kept in the output with size 1, by default it is set to false.
+        This operation takes two operands:
 
-        - 'result' is a tensor of integer values containing the indices of the minimum value.
-        }];
+        - `input1` is a tensor with integer or floating-point elements.
+        - `input2` is a tensor with integer or floating-point elements.
+
+        The result `result` is a tensor with integer or floating-point elements.
+    }];
 
     let arguments = (ins
-        IntOrFloatTensor:$input,
-        OptionalAttr<I32Attr>:$dim,
-        DefaultValuedAttr<BoolAttr, "false">:$keepdim
+        IntOrFloatTensor:$input1,
+        IntOrFloatTensor:$input2
     );
 
     let results = (outs
-        I64Tensor:$result
+        IntOrFloatTensor:$result
     );
 }
+
+def reductionLinalgOp : Alex_Op<"reductionLinalg"> {
+    let summary = [{
+        Accumulates the sum of two tensors and divides by a scalar value.
+    }];
+
+    let description = [{
+        This operation takes two operands:
+
+        - `input1` is a tensor with integer or floating-point elements.
+        - `input2` is a tensor with integer or floating-point elements.
+
+        The result `result` is a tensor with integer or floating-point elements.
+    }];
+
+    let arguments = (ins
+        IntOrFloatTensor:$input1
+    );
+
+    let results = (outs
+        AnyTypeOf<[AnyInteger, AnyFloat]>:$result
+    );
+}
+
+

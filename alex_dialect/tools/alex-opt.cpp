@@ -11,22 +11,40 @@
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
+#include "mlir/Dialect/Arith/Transforms/BufferizableOpInterfaceImpl.h"
+#include "mlir/Dialect/Bufferization/Transforms/BufferizableOpInterfaceImpl.h"
+#include "mlir/Dialect/Bufferization/Transforms/FuncBufferizableOpInterfaceImpl.h"
+#include "mlir/Dialect/Linalg/Transforms/BufferizableOpInterfaceImpl.h"
+#include "mlir/Dialect/Tensor/Transforms/BufferizableOpInterfaceImpl.h"
 
 std::unique_ptr<mlir::Pass> createAlexToArithPass();
+std::unique_ptr<mlir::Pass> createAlexToLinalgPass();
 
-int main(int argc, char **argv) {
-  mlir::registerAllPasses();
+int main(int argc, char **argv)
+{
 
-  // Register the custom lowering pass.
-  mlir::registerPass(
-      []() -> std::unique_ptr<mlir::Pass> { return createAlexToArithPass(); });
+    mlir::registerAllPasses();
 
-  mlir::DialectRegistry registry;
+    // Register the custom lowering pass.
+    mlir::registerPass(
+        []() -> std::unique_ptr<mlir::Pass>
+        { return createAlexToArithPass(); });
+    mlir::registerPass(
+        []() -> std::unique_ptr<mlir::Pass>
+        { return createAlexToLinalgPass(); });
 
-  registry.insert<alex::AlexDialect, mlir::arith::ArithDialect,
-                  mlir::func::FuncDialect, mlir::tensor::TensorDialect,
-                  mlir::scf::SCFDialect, mlir::math::MathDialect>();
+    mlir::DialectRegistry registry;
 
-  return mlir::asMainReturnCode(
-      mlir::MlirOptMain(argc, argv, "Alex Optimizer\n", registry));
+    registry.insert<alex::AlexDialect, mlir::arith::ArithDialect,
+                    mlir::func::FuncDialect, mlir::tensor::TensorDialect>();
+
+    mlir::arith::registerBufferizableOpInterfaceExternalModels(registry);
+    mlir::bufferization::registerBufferizableOpInterfaceExternalModels(registry);
+    mlir::bufferization::func_ext::registerBufferizableOpInterfaceExternalModels(
+        registry);
+    mlir::tensor::registerBufferizableOpInterfaceExternalModels(registry);
+    mlir::linalg::registerBufferizableOpInterfaceExternalModels(registry);
+
+    return mlir::asMainReturnCode(
+        mlir::MlirOptMain(argc, argv, "Alex Optimizer\n", registry));
 }
