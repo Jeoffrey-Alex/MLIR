@@ -119,7 +119,8 @@ mlir::RankedTensorType resultType =
 mlir::Type elementType = resultType.getElementType();
 
 //use mlir::Value empty [you dont have to use .getResult() because the empty op
-returns a single value] mlir::tensor::EmptyOp empty =
+//returns a single value] 
+mlir::tensor::EmptyOp empty =
 mlir::tensor::EmptyOp::create( rewriter, loc, resultType.getShape(),
 resultType.getElementType());
 
@@ -291,6 +292,178 @@ public:
   }
 };
 
+class ConvertArgminOp : public mlir::OpConversionPattern<alex::argminOp> {
+public:
+  using mlir::OpConversionPattern<alex::argminOp>::OpConversionPattern;
+
+  mlir::LogicalResult
+  matchAndRewrite(alex::argminOp op, OpAdaptor adaptor,
+                  mlir::ConversionPatternRewriter &rewriter) const override {
+    mlir::Location loc = op.getLoc();
+    mlir::Value input = adaptor.getInput();
+    mlir::RankedTensorType inputType =
+        llvm::dyn_cast<mlir::RankedTensorType>(input.getType());
+
+    if (!inputType || !inputType.hasStaticShape())
+      return rewriter.notifyMatchFailure(
+          op, "input must be a ranked tensor with static shape");
+    int64_t rank = inputType.getRank();
+    if (rank == 0)
+      return rewriter.notifyMatchFailure(
+          op, "input tensor must have rank greater than 0");
+
+    // Reduction dimension: -1 means reduce over all dims (dim = None).
+    int64_t reduceDim = -1;
+    if (std::optional<int32_t> dimAttr = op.getDim()) {
+      reduceDim = *dimAttr < 0 ? *dimAttr + rank : *dimAttr;
+      if (reduceDim < 0 || reduceDim >= rank)
+        return rewriter.notifyMatchFailure(op, "dim is out of range");
+    }
+    bool reduceAll = reduceDim < 0;
+
+    mlir::Type elementType = inputType.getElementType();
+    mlir::IntegerType i64Type = rewriter.getI64Type();
+
+    // Shape after reduction (keepdim = false): drop the reduced dim, or all
+    // dims when dim = None. Output map keeps the same (non-reduced) dims.
+    llvm::SmallVector<int64_t> resultShape;
+    llvm::SmallVector<mlir::AffineExpr> outputExprs;
+    if (!reduceAll) {
+      for (int64_t d = 0; d < rank; ++d) {
+        if (d == reduceDim)
+          continue;
+        resultShape.push_back(inputType.getDimSize(d));
+        outputExprs.push_back(rewriter.getAffineDimExpr(d));
+      }
+    }
+    mlir::RankedTensorType minTensorType =
+        mlir::RankedTensorType::get(resultShape, elementType);
+    mlir::RankedTensorType indexTensorType =
+        mlir::RankedTensorType::get(resultShape, i64Type);
+
+    mlir::TypedAttr maxAttr;
+    if (mlir::FloatType floatType =
+            llvm::dyn_cast<mlir::FloatType>(elementType))
+      maxAttr = rewriter.getFloatAttr(
+          floatType, llvm::APFloat::getInf(floatType.getFloatSemantics()));
+    else
+      maxAttr = rewriter.getIntegerAttr(
+          elementType,
+          llvm::APInt::getSignedMaxValue(elementType.getIntOrFloatBitWidth()));
+
+    mlir::Value maxValue =
+        mlir::arith::ConstantOp::create(rewriter, loc, maxAttr);
+    mlir::Value zero = mlir::arith::ConstantOp::create(
+        rewriter, loc, rewriter.getI64IntegerAttr(0));
+
+    mlir::tensor::EmptyOp emptyMin =
+        mlir::tensor::EmptyOp::create(rewriter, loc, resultShape, elementType);
+    mlir::tensor::EmptyOp emptyIndex =
+        mlir::tensor::EmptyOp::create(rewriter, loc, resultShape, i64Type);
+    mlir::Value initMin =
+        mlir::linalg::FillOp::create(rewriter, loc, mlir::ValueRange{maxValue},
+                                     mlir::ValueRange{emptyMin.getResult()})
+            .getResult(0);
+    mlir::Value initIndex =
+        mlir::linalg::FillOp::create(rewriter, loc, mlir::ValueRange{zero},
+                                     mlir::ValueRange{emptyIndex.getResult()})
+            .getResult(0);
+
+    mlir::AffineMap inputMap =
+        mlir::AffineMap::getMultiDimIdentityMap(rank, rewriter.getContext());
+    mlir::AffineMap outputMap =
+        mlir::AffineMap::get(rank, 0, outputExprs, rewriter.getContext());
+    llvm::SmallVector<mlir::AffineMap> indexingMaps = {inputMap, outputMap,
+                                                       outputMap};
+
+    // dim = None: every dim is a reduction. Otherwise only reduceDim is.
+    llvm::SmallVector<mlir::utils::IteratorType> iteratorTypes(
+        rank, reduceAll ? mlir::utils::IteratorType::reduction
+                        : mlir::utils::IteratorType::parallel);
+    if (!reduceAll)
+      iteratorTypes[reduceDim] = mlir::utils::IteratorType::reduction;
+
+    mlir::linalg::GenericOp genericOp = mlir::linalg::GenericOp::create(
+        rewriter, loc, mlir::TypeRange{minTensorType, indexTensorType},
+        mlir::ValueRange{input}, mlir::ValueRange{initMin, initIndex},
+        indexingMaps, iteratorTypes,
+        [&](mlir::OpBuilder &b, mlir::Location l, mlir::ValueRange args) {
+          mlir::Value value = args[0];
+          mlir::Value currentMin = args[1];
+          mlir::Value currentIndex = args[2];
+
+          // dim given: the index along that dim is the answer.
+          // dim = None: row-major flattened index over all dims.
+          mlir::Value candidateIndex;
+          if (!reduceAll)
+            candidateIndex = mlir::linalg::IndexOp::create(b, l, reduceDim);
+          int64_t stride = 1;
+          for (int64_t d = rank - 1; reduceAll && d >= 0; --d) {
+            mlir::Value dimIndex = mlir::linalg::IndexOp::create(b, l, d);
+            mlir::Value strideValue =
+                mlir::arith::ConstantIndexOp::create(b, l, stride);
+            mlir::Value term =
+                mlir::arith::MulIOp::create(b, l, dimIndex, strideValue);
+            candidateIndex =
+                candidateIndex
+                    ? mlir::arith::AddIOp::create(b, l, candidateIndex, term)
+                          .getResult()
+                    : term;
+            stride *= inputType.getDimSize(d);
+          }
+
+          mlir::Value candidateIndexI64 =
+              mlir::arith::IndexCastOp::create(b, l, i64Type, candidateIndex);
+
+          mlir::Value isSmaller;
+          if (llvm::isa<mlir::FloatType>(elementType))
+            isSmaller = mlir::arith::CmpFOp::create(
+                b, l, mlir::arith::CmpFPredicate::OLT, value, currentMin);
+          else
+            isSmaller = mlir::arith::CmpIOp::create(
+                b, l, mlir::arith::CmpIPredicate::slt, value, currentMin);
+
+          mlir::Value newMin =
+              mlir::arith::SelectOp::create(b, l, isSmaller, value, currentMin);
+          mlir::Value newIndex = mlir::arith::SelectOp::create(
+              b, l, isSmaller, candidateIndexI64, currentIndex);
+          mlir::linalg::YieldOp::create(b, l,
+                                        mlir::ValueRange{newMin, newIndex});
+        });
+
+    mlir::Value result = genericOp.getResult(1);
+
+    // keepdim = true: put the reduced dim(s) back with size 1.
+    if (op.getKeepdim()) {
+      llvm::SmallVector<int64_t> keptShape;
+      llvm::SmallVector<mlir::ReassociationIndices> reassociation;
+      for (int64_t d = 0; d < rank; ++d) {
+        bool reduced = reduceAll || d == reduceDim;
+        keptShape.push_back(reduced ? 1 : inputType.getDimSize(d));
+        if (resultShape.empty())
+          continue; // Scalar -> 1x1x..: empty reassociation.
+        // Each source dim gets its own group; the size-1 dim joins the group
+        // of its left neighbour (or the right one when it is dim 0).
+        if (reduced && d > 0)
+          reassociation.back().push_back(d);
+        else if (reduced)
+          reassociation.push_back({d});
+        else if (!reassociation.empty() && reduceDim == 0 && d == 1)
+          reassociation.back().push_back(d);
+        else
+          reassociation.push_back({d});
+      }
+      mlir::RankedTensorType keptType =
+          mlir::RankedTensorType::get(keptShape, i64Type);
+      result = mlir::tensor::ExpandShapeOp::create(rewriter, loc, keptType,
+                                                   result, reassociation);
+    }
+
+    rewriter.replaceOp(op, result);
+    return mlir::success();
+  }
+};
+
 } // namespace
 
 class AlexToLinalgPass
@@ -321,11 +494,11 @@ public:
                            mlir::arith::ArithDialect>();
 
     target.addIllegalOp<alex::addLinalgOp, alex::addBCLinalgOp,
-                        alex::reductionLinalgOp>();
+                        alex::reductionLinalgOp, alex::argminOp>();
 
     mlir::RewritePatternSet patterns(context);
-    patterns.add<ConvertAccAddDivOp, ConvertReductionOp, ConvertaddBCLinalgOp>(
-        context);
+    patterns.add<ConvertAccAddDivOp, ConvertReductionOp, ConvertaddBCLinalgOp,
+                 ConvertArgminOp>(context);
 
     if (failed(mlir::applyPartialConversion(module, target,
                                             std::move(patterns)))) {
