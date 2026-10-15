@@ -400,12 +400,12 @@ public:
 
 // scf.for -> tensor.extract -> airth.cmpi/cmpf -> arith.select -> tensor.insert
 
-class ConvertArgminOp : public mlir::OpConversionPattern<alex::ArgminOp> {
+class ConvertArgminOp : public mlir::OpConversionPattern<alex::argminOp> {
 public:
-  using mlir::OpConversionPattern<alex::ArgminOp>::OpConversionPattern;
+  using mlir::OpConversionPattern<alex::argminOp>::OpConversionPattern;
 
   mlir::LogicalResult
-  matchAndRewrite(alex::ArgminOp op, OpAdaptor adaptor,
+  matchAndRewrite(alex::argminOp op, OpAdaptor adaptor,
                   mlir::ConversionPatternRewriter &rewriter) const override {
     mlir::Location loc = op.getLoc();
 
@@ -818,7 +818,7 @@ public:
                          mlir::tensor::TensorDialect, mlir::scf::SCFDialect>();
     // Alex operations must be lowered
     target.addIllegalOp<alex::AddOp, alex::SubOp, alex::MulOp, alex::AddcmulOp,
-                        alex::ArgminOp>();
+                        alex::argminOp>();
 
     mlir::RewritePatternSet patterns(&context);
 

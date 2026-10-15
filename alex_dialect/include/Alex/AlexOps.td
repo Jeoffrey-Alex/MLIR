@@ -215,4 +215,27 @@ def reductionLinalgOp : Alex_Op<"reductionLinalg"> {
     );
 }
 
+def argminOp: Alex_Op<"argmin"> {
+    let summary = "Returns the indices of the minimum value of a tensor";
+
+    let description = [{
+        This operation takes a tensor operand and an integer attribute and bool attribute.
+        
+        - 'input' is a required tensor of any type and shape.
+        - 'dim' is an optional attribute that specifies the dimension to reduce.
+        - 'keepdim' is an attribute that specifies whether the reduced dimension is kept in the output with size 1, by default it is set to false.
+
+        - 'result' is a tensor of integer values containing the indices of the minimum value.
+        }];
+
+    let arguments = (ins
+        IntOrFloatTensor:$input,
+        OptionalAttr<I32Attr>:$dim,
+        DefaultValuedAttr<BoolAttr, "false">:$keepdim
+    );
+
+    let results = (outs
+        I64Tensor:$result
+    );
+}
 
