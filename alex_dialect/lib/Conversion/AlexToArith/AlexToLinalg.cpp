@@ -119,7 +119,7 @@ mlir::RankedTensorType resultType =
 mlir::Type elementType = resultType.getElementType();
 
 //use mlir::Value empty [you dont have to use .getResult() because the empty op
-//returns a single value] 
+//returns a single value]
 mlir::tensor::EmptyOp empty =
 mlir::tensor::EmptyOp::create( rewriter, loc, resultType.getShape(),
 resultType.getElementType());
@@ -464,6 +464,55 @@ public:
   }
 };
 
+class ConvertreluOp : public mlir::OpConversionPattern<alex::reluOp> {
+public:
+  using mlir::OpConversionPattern<alex::reluOp>::OpConversionPattern;
+
+  mlir::LogicalResult
+  matchAndRewrite(alex::reluOp op, OpAdaptor adaptor,
+                  mlir::ConversionPatternRewriter &rewriter) const override {
+    mlir::Location loc = op.getLoc();
+    mlir::RankedTensorType inputType =
+        llvm::dyn_cast<mlir::RankedTensorType>(adaptor.getInput().getType());
+    if (!inputType)
+      return rewriter.notifyMatchFailure(op, "input must be a ranked tensor");
+
+    mlir::Type elementType = inputType.getElementType();
+    unsigned rank = inputType.getRank();
+
+    mlir::arith::ConstantOp zero = mlir::arith::ConstantOp::create(
+        rewriter, loc, rewriter.getZeroAttr(elementType));
+    mlir::tensor::EmptyOp empty = mlir::tensor::EmptyOp::create(
+        rewriter, loc, inputType.getShape(), elementType);
+
+    llvm::SmallVector<mlir::utils::IteratorType> iteratorTypes(
+        rank, mlir::utils::IteratorType::parallel);
+    mlir::AffineMap identityMap =
+        mlir::AffineMap::getMultiDimIdentityMap(rank, rewriter.getContext());
+    llvm::SmallVector<mlir::AffineMap> indexingMaps = {identityMap,
+                                                       identityMap};
+
+    mlir::linalg::GenericOp genericOp = mlir::linalg::GenericOp::create(
+        rewriter, loc, mlir::TypeRange{inputType},
+        mlir::ValueRange{adaptor.getInput()},
+        mlir::ValueRange{empty.getResult()}, indexingMaps, iteratorTypes,
+        [&](mlir::OpBuilder &b, mlir::Location l, mlir::ValueRange args) {
+          mlir::Value input = args[0];
+          mlir::Value reluResult;
+
+          if (llvm::isa<mlir::FloatType>(elementType))
+            reluResult = mlir::arith::MaximumFOp::create(b, l, input, zero); // input > 0.0 ? input : 0.0
+          else
+            reluResult = mlir::arith::MaxSIOp::create(b, l, input, zero);
+
+          mlir::linalg::YieldOp::create(b, l, reluResult);
+        });
+
+    rewriter.replaceOp(op, genericOp.getResult(0));
+    return mlir::success();
+  }
+};
+
 } // namespace
 
 class AlexToLinalgPass
@@ -493,12 +542,13 @@ public:
                            mlir::tensor::TensorDialect,
                            mlir::arith::ArithDialect>();
 
-    target.addIllegalOp<alex::addLinalgOp, alex::addBCLinalgOp,
-                        alex::reductionLinalgOp, alex::argminOp>();
+    target
+        .addIllegalOp<alex::addLinalgOp, alex::addBCLinalgOp,
+                      alex::reductionLinalgOp, alex::argminOp, alex::reluOp>();
 
     mlir::RewritePatternSet patterns(context);
     patterns.add<ConvertAccAddDivOp, ConvertReductionOp, ConvertaddBCLinalgOp,
-                 ConvertArgminOp>(context);
+                 ConvertArgminOp, ConvertreluOp>(context);
 
     if (failed(mlir::applyPartialConversion(module, target,
                                             std::move(patterns)))) {
