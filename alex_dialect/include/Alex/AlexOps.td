@@ -239,3 +239,22 @@ def argminOp: Alex_Op<"argmin"> {
     );
 }
 
+def reluOp: Alex_Op<"relu"> {
+    let summary = "Applies the rectified linear unit function to a tensor";
+
+    let description = [{
+        This operation takes a tensor operand and applies the rectified linear unit (ReLU) function element-wise.
+
+        - 'input' is a required tensor of any type and shape.
+        - 'result' is a tensor of the same type and shape as the input, with all negative values replaced by zero.
+    }];
+
+    let arguments = (ins
+        IntOrFloatTensor:$input
+    );
+
+    let results = (outs
+        IntOrFloatTensor:$result
+    );
+}
+
