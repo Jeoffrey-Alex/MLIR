@@ -21,7 +21,7 @@ from mlir_alex.execution_engine import ExecutionEngine
 from mlir_alex.dialects import alex_nanobind as alex
 
 TEST_DIR = Path(__file__).parent.parent
-MLIR_FILE = TEST_DIR / "python" /"argmin" / "argmin_dim_3D.mlir"
+MLIR_FILE = TEST_DIR / "transpose" / "transpose.mlir"
 
 MLIR_TO_CTYPE = {
     "f32": ctypes.c_float,
@@ -117,30 +117,26 @@ def run_tensor(module, func_name, rank, elem_ctype):
 
     return actual
 
-# Test the addcmul operation
-def test_addcmul():
+# Test the transpose operation
+def test_transpose():
     print("\n")
     print("=" * 60)
-    print("TEST: argmin")
+    print("TEST: transpose")
     print("=" * 60)
 
     mlir_text = MLIR_FILE.read_text()
 
+    # Same input as the arith.constant in transpose.mlir (2x3, f32)
     input_val = [
-      [
-        [1, 2, 3, 4],
-        [5, 6, 7, 8],
-        [9, 10, 11, 12]
-      ],
-      [
-        [13, 14, 15, 16],
-        [17, 18, 0, 20],
-        [21, 22, 23, 24]
-      ]
+        [1.0, 2.0, 3.0],
+        [4.0, 5.0, 6.0]
     ]
 
-    expected = torch.argmin(
-        torch.tensor(input_val, dtype=torch.int32),
+    # Same dims as the alex.transpose attributes: dim0 = 0, dim1 = 1
+    expected = torch.transpose(
+        torch.tensor(input_val, dtype=torch.float32),
+        0,
+        1,
     )
 
     print("\nExpected (PyTorch):")
@@ -154,7 +150,7 @@ def test_addcmul():
 
         pm = PassManager.parse(
             "builtin.module("
-            "convert-alex-to-arith,"
+            "convert-alex-to-linalg,"
             "one-shot-bufferize{bufferize-function-boundaries=true},"
             "convert-linalg-to-loops,"
             "convert-scf-to-cf,"
@@ -185,7 +181,7 @@ def test_addcmul():
 
         actual_tensor = torch.tensor(
             actual,
-            dtype=torch.int64,
+            dtype=torch.float32,
         )
 
         print("\nActual (Alex):")
@@ -201,6 +197,91 @@ def test_addcmul():
         )
 
         print("\nPASS")
+
+# # Test the addcmul operation
+# def test_addcmul():
+#     print("\n")
+#     print("=" * 60)
+#     print("TEST: argmin")
+#     print("=" * 60)
+
+#     mlir_text = MLIR_FILE.read_text()
+
+#     input_val = [
+#       [
+#         [1, 2, 3, 4],
+#         [5, 6, 7, 8],
+#         [9, 10, 11, 12]
+#       ],
+#       [
+#         [13, 14, 15, 16],
+#         [17, 18, 0, 20],
+#         [21, 22, 23, 24]
+#       ]
+#     ]
+
+#     expected = torch.argmin(
+#         torch.tensor(input_val, dtype=torch.int32),
+#     )
+
+#     print("\nExpected (PyTorch):")
+#     print(expected)
+
+#     with Context():
+#         alex.register_dialects()
+
+#         module = Module.parse(mlir_text)
+#         funcs = get_all_funcs(module)
+
+#         pm = PassManager.parse(
+#             "builtin.module("
+#             "convert-alex-to-arith,"
+#             "one-shot-bufferize{bufferize-function-boundaries=true},"
+#             "convert-linalg-to-loops,"
+#             "convert-scf-to-cf,"
+#             "convert-bufferization-to-memref,"
+#             "convert-arith-to-llvm,"
+#             "convert-index-to-llvm,"
+#             "finalize-memref-to-llvm,"
+#             "convert-func-to-llvm,"
+#             "convert-cf-to-llvm,"
+#             "reconcile-unrealized-casts"
+#             ")"
+#         )
+
+#         pm.run(module.operation)
+
+#         func_name, return_type = funcs[0]
+
+#         tensor_type = RankedTensorType(return_type)
+#         rank = len(tensor_type.shape)
+#         elem_ctype = ctype_for(tensor_type.element_type)
+
+#         actual = run_tensor(
+#             module,
+#             func_name,
+#             rank,
+#             elem_ctype,
+#         )
+
+#         actual_tensor = torch.tensor(
+#             actual,
+#             dtype=torch.int64,
+#         )
+
+#         print("\nActual (Alex):")
+#         print(actual_tensor)
+
+#         assert torch.equal(
+#             actual_tensor,
+#             expected,
+#         ), (
+#             "\nResult mismatch!\n"
+#             f"Expected:\n{expected}\n"
+#             f"Actual:\n{actual_tensor}"
+#         )
+
+#         print("\nPASS")
         
 
 # def test_addcmul():

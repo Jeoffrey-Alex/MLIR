@@ -1,5 +1,7 @@
 include "mlir/IR/OpBase.td"
 include "Alex/AlexDialect.td"
+include "mlir/Interfaces/SideEffectInterfaces.td" 
+
 
 def IntOrFloatTensor : TensorOf<[AnyTypeOf<[AnyInteger, AnyFloat]>]>;
 def Float3DTensor : TensorRankOf<[AnyFloat], [3]>;
@@ -258,3 +260,34 @@ def reluOp: Alex_Op<"relu"> {
     );
 }
 
+def transposeOp: Alex_Op<"transpose",[Pure]>{
+    let hasVerifier = 1;
+
+    let builders = [
+        OpBuilder<(ins "mlir::Value":$input, "int32_t":$dim0, "int32_t":$dim1)>
+    ];
+
+    let hasFolder = 1;
+
+    let hasCanonicalizer = 1;
+
+    let summary = "Swaps two dimensions of a tensor";
+
+    let description = [{
+        This operation takes a tensor operand and swaps two of its dimensions, like torch.transpose.
+
+        - 'input' is a required ranked tensor of any rank >= 1.
+        - 'dim0' and 'dim1' are the dimensions to swap. Negative values count from the end (-1 is the last dimension).
+        - 'result' has the input shape with dimensions dim0 and dim1 exchanged, and the same element type.
+    }];
+
+    let arguments = (ins
+        IntOrFloatTensor:$input,
+        I32Attr:$dim0,
+        I32Attr:$dim1
+    );
+
+    let results = (outs
+        IntOrFloatTensor:$result    
+    );
+}

@@ -6,9 +6,11 @@
 #include "mlir/Dialect/Linalg/Passes.h"
 
 void registerAlexToArithPass();
+void registerAlexToLinalgPass();
 
 void alexRegisterAllPasses() {
   registerAlexToArithPass();
+  registerAlexToLinalgPass();
 
   mlir::bufferization::registerOneShotBufferizePass();
   mlir::registerConvertLinalgToLoopsPass();
