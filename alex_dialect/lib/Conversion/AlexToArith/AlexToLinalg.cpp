@@ -513,6 +513,68 @@ public:
   }
 };
 
+class ConvertTransposeOp
+    : public mlir::OpConversionPattern<alex::transposeOp> {
+public:
+  using mlir::OpConversionPattern<alex::transposeOp>::OpConversionPattern;
+
+  mlir::LogicalResult
+  matchAndRewrite(alex::transposeOp op, OpAdaptor adaptor,
+                  mlir::ConversionPatternRewriter &rewriter) const override {
+    mlir::Location loc = op.getLoc();
+
+    mlir::RankedTensorType inputType =
+        llvm::dyn_cast<mlir::RankedTensorType>(adaptor.getInput().getType());
+    mlir::RankedTensorType resultType =
+        llvm::dyn_cast<mlir::RankedTensorType>(op.getResult().getType());
+    if (!inputType || !resultType)
+      return rewriter.notifyMatchFailure(op, "input and result must be ranked");
+
+    int64_t rank = inputType.getRank();
+
+    // The verifier already checked the dims and the result shape, so
+    // normalizing cannot fail here.
+    int64_t dim0 = *alex::normalizeDim(op.getDim0Attr().getInt(), rank);
+    int64_t dim1 = *alex::normalizeDim(op.getDim1Attr().getInt(), rank);
+
+    // perm[i] = which input dimension lands in output dimension i.
+    // Identity with dim0 and dim1 exchanged.
+    llvm::SmallVector<unsigned> perm;
+    for (int64_t i = 0; i < rank; ++i)
+      perm.push_back(i);
+    std::swap(perm[dim0], perm[dim1]);
+
+    mlir::Type elementType = resultType.getElementType();
+
+    // Output buffer has the result shape, not the input shape.
+    mlir::tensor::EmptyOp empty = mlir::tensor::EmptyOp::create(
+        rewriter, loc, resultType.getShape(), elementType);
+
+    llvm::SmallVector<mlir::utils::IteratorType> iteratorTypes(
+        rank, mlir::utils::IteratorType::parallel);
+
+    // Loops walk the output: out[..d_i..] reads in[..d_perm[i]..].
+    // A swap is its own inverse, so perm also works as the input map.
+    mlir::AffineMap inputMap =
+        mlir::AffineMap::getPermutationMap(perm, rewriter.getContext());
+    mlir::AffineMap outputMap =
+        mlir::AffineMap::getMultiDimIdentityMap(rank, rewriter.getContext());
+    llvm::SmallVector<mlir::AffineMap> indexingMaps = {inputMap, outputMap};
+
+    mlir::linalg::GenericOp genericOp = mlir::linalg::GenericOp::create(
+        rewriter, loc, mlir::TypeRange{resultType},
+        mlir::ValueRange{adaptor.getInput()},
+        mlir::ValueRange{empty.getResult()}, indexingMaps, iteratorTypes,
+        [&](mlir::OpBuilder &b, mlir::Location l, mlir::ValueRange args) {
+          // Pure data movement: just forward the input element.
+          mlir::linalg::YieldOp::create(b, l, args[0]);
+        });
+
+    rewriter.replaceOp(op, genericOp.getResult(0));
+    return mlir::success();
+  }
+};
+
 } // namespace
 
 class AlexToLinalgPass
@@ -544,11 +606,12 @@ public:
 
     target
         .addIllegalOp<alex::addLinalgOp, alex::addBCLinalgOp,
-                      alex::reductionLinalgOp, alex::argminOp, alex::reluOp>();
+                      alex::reductionLinalgOp, alex::argminOp, alex::reluOp,
+                      alex::transposeOp>();
 
     mlir::RewritePatternSet patterns(context);
     patterns.add<ConvertAccAddDivOp, ConvertReductionOp, ConvertaddBCLinalgOp,
-                 ConvertArgminOp, ConvertreluOp>(context);
+                 ConvertArgminOp, ConvertreluOp, ConvertTransposeOp>(context);
 
     if (failed(mlir::applyPartialConversion(module, target,
                                             std::move(patterns)))) {
@@ -559,4 +622,8 @@ public:
 
 std::unique_ptr<mlir::Pass> createAlexToLinalgPass() {
   return std::make_unique<AlexToLinalgPass>();
+}
+
+void registerAlexToLinalgPass() {
+  mlir::PassRegistration<AlexToLinalgPass>();
 }
