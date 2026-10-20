@@ -95,7 +95,6 @@ void alex::transposeOp::build(mlir::OpBuilder &builder,
         builder.getI32IntegerAttr(dim1));
 }
 
-
 // Declared by `let hasFolder = 1;` in AlexOps.td.
 // transpose(transpose(x)) with the same swap is just x.
 mlir::OpFoldResult alex::transposeOp::fold(FoldAdaptor adaptor) {
@@ -105,7 +104,8 @@ mlir::OpFoldResult alex::transposeOp::fold(FoldAdaptor adaptor) {
     return {};
   int64_t rank = inputType.getRank();
 
-  // 1. My two dims, cleaned up. The verifier already checked them, so * is safe.
+  // 1. My two dims, cleaned up. The verifier already checked them, so * is
+  // safe.
   int64_t dim0 = *normalizeDim(getDim0Attr().getInt(), rank);
   int64_t dim1 = *normalizeDim(getDim1Attr().getInt(), rank);
 
@@ -122,7 +122,8 @@ mlir::OpFoldResult alex::transposeOp::fold(FoldAdaptor adaptor) {
   if (!sameSwap)
     return {};
 
-  // 4. Swap undone: replace me with the inner transpose's input (the original x).
+  // 4. Swap undone: replace me with the inner transpose's input (the original
+  // x).
   return inner.getInput();
 }
 
@@ -170,4 +171,66 @@ struct NormalizeTransposeDims
 void alex::transposeOp::getCanonicalizationPatterns(
     mlir::RewritePatternSet &results, mlir::MLIRContext *context) {
   results.add<NormalizeTransposeDims>(context);
+}
+
+// for relu operations
+mlir::LogicalResult alex::reluOp::verify() {
+  mlir::Type inputType = getInput().getType();
+  mlir::Type resultType = getResult().getType();
+
+  if (inputType != resultType)
+    return emitOpError() << "expected result type " << inputType << ", got"
+                         << resultType;
+
+  return mlir::success();
+}
+
+mlir::OpFoldResult alex::reluOp::fold(FoldAdaptor adaptor) {
+  reluOp inner = getInput().getDefiningOp<reluOp>();
+
+  if (!inner)
+    return {};
+
+  return getInput();
+}
+
+namespace {
+
+/// Moves relu above transpose: relu(transpose(x)) -> transpose(relu(x)).
+struct SwapReluTranspose : public mlir::OpRewritePattern<alex::reluOp> {
+  using mlir::OpRewritePattern<alex::reluOp>::OpRewritePattern;
+
+  mlir::LogicalResult
+  matchAndRewrite(alex::reluOp op,
+                  mlir::PatternRewriter &rewriter) const override {
+    alex::transposeOp transpose =
+        op.getInput().getDefiningOp<alex::transposeOp>();
+
+    if (!transpose)
+      return mlir::failure();
+
+    // If the transpose has other users it stays alive, so the swap would only
+    // add ops.
+    if (!transpose.getResult().hasOneUse())
+      return mlir::failure();
+
+    mlir::Value x = transpose.getInput();
+
+    alex::reluOp newRelu =
+        alex::reluOp::create(rewriter, op.getLoc(), x.getType(), x);
+
+    int32_t dim0 = static_cast<int32_t>(transpose.getDim0Attr().getInt());
+    int32_t dim1 = static_cast<int32_t>(transpose.getDim1Attr().getInt());
+    rewriter.replaceOpWithNewOp<alex::transposeOp>(op, newRelu.getResult(),
+                                                   dim0, dim1);
+
+    return mlir::success();
+  }
+};
+
+} // namespace
+
+void alex::reluOp::getCanonicalizationPatterns(mlir::RewritePatternSet &results,
+                                               mlir::MLIRContext *context) {
+  results.add<SwapReluTranspose>(context);
 }

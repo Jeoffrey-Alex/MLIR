@@ -15,9 +15,9 @@ Final goal: contribute to Torch-MLIR, ONNX-MLIR or another MLIR-based project.
 | 2 | Compiler fundamentals | 🟡 Partial | SSA, IR and lowering are used every day. Not yet studied: AST and front ends, optimization theory |
 | 3 | LLVM basics | 🔴 Light | Lowered to the LLVM dialect (assignment 5), but LLVM IR itself hasn't been read or optimized |
 | 4 | MLIR fundamentals | 🟢 Done | Dialect, ops, values, types, regions and blocks (built a `linalg.generic` body by hand) |
-| 5 | MLIR development | 🟡 Partial | ✅ TableGen/ODS, type constraints, optional operands, conversion patterns. ❌ Verifiers, folding, canonicalization, assembly format, traits, interfaces, DRR/PDLL |
+| 5 | MLIR development | 🟡 Partial | ✅ TableGen/ODS, type constraints, optional operands, conversion patterns, verifiers, custom builder, folders, canonicalization patterns, `Pure` trait (`transpose`, `relu`). ❌ Assembly format, interfaces, DRR/PDLL |
 | 6 | MLIR lowering | 🟡 Partial | ✅ `alex` → `arith`, `alex` → `linalg` (`generic`, `elementwise`, broadcast maps, reduction), `tensor.empty`, `linalg.fill`. ❌ Running the full pipeline to LLVM and executing it, bufferization in depth, `affine`, `vector`, `TypeConverter` |
-| 7 | MLIR testing | 🟡 Partial | ✅ lit + FileCheck for the `arith` lowering, failure tests, pytest for the Python bindings. ❌ `test/linalg/*.mlir` have no `RUN`/`CHECK` lines |
+| 7 | MLIR testing | 🟡 Partial | ✅ lit + FileCheck for the `arith` lowering, failure tests, `-verify-diagnostics` tests for verifiers, `-canonicalize` tests for folders and patterns, pytest for the Python bindings. ❌ `test/linalg/*.mlir` have no `RUN`/`CHECK` lines |
 | 8 | Build MLIR projects | 🟡 In progress | This repo: custom ML ops, the `alex-opt` tool, a C API and nanobind Python bindings |
 | 9 | Study existing projects | 🔴 Not started | |
 | 10 | Open-source contributions | 🔴 Not started | |
@@ -32,7 +32,11 @@ Final goal: contribute to Torch-MLIR, ONNX-MLIR or another MLIR-based project.
 6. Python bindings through the C API and nanobind, plus pytest.
 7. Assignment 5: lowering to LLVM.
 8. Assignment 6: an `addcmul` op with 1D, 2D, 3D and dynamic-shape tests.
-9. Current branch, `try/accm_add_div`: lowering to `linalg` with `linalg.elementwise`, broadcasting and a `linalg.generic` reduction (zero-initialized accumulator, int/float, any rank).
+9. Lowering to `linalg` with `linalg.elementwise`, broadcasting and a `linalg.generic` reduction (zero-initialized accumulator, int/float, any rank).
+10. `arange` op and its lowering; `argmin` op lowered to `linalg`.
+11. `relu` op lowered to `linalg.generic` with `arith.maximumf`.
+12. `transpose` op: shape helper, verifier, custom builder, folder (`transpose(transpose(x))` → `x`), canonicalization pattern (normalize dims), `Pure`. See `README_TransposeOp.md`.
+13. Current branch, `relu-canonicalizer`: `relu` verifier (result type must equal input type), folder (`relu(relu(x))` → `relu(x)`), canonicalization pattern (`relu(transpose(x))` → `transpose(relu(x))`, only when the transpose has one use).
 
 ---
 
@@ -68,14 +72,20 @@ branches, like the earlier assignments.
 **Learn:** bufferization (tensor vs. memref, `one-shot-bufferize`), LLVM IR basics (basic blocks, `phi`, `load`/`store`, `getelementptr`).
 
 ### Step 3: Make your ops "real" MLIR ops (MLIR development)
-- [ ] Add **verifiers** (`let hasVerifier = 1;`) so invalid IR is rejected at parse time instead of in the lowering.
-- [ ] Add **traits**: `Pure`, `SameOperandsAndResultType`, `SameOperandsAndResultElementType`.
+- [x] Add **verifiers** (`let hasVerifier = 1;`) so invalid IR is rejected at parse time instead of in the lowering. Done for `transpose` and `relu`.
+- [ ] Add **traits**: `Pure`, `SameOperandsAndResultType`, `SameOperandsAndResultElementType`. `Pure` is on `transpose`; `relu` could use `SameOperandsAndResultType` instead of its hand-written verifier.
 - [ ] Add an **`assemblyFormat`** so you can write `alex.add %a, %b : tensor<4xf32>`.
-- [ ] Add a **folder** (`hasFolder`): for example, `alex.add` of two constants folds to a constant, and `x + 0` folds to `x`.
-- [ ] Add a **canonicalization pattern** (`hasCanonicalizer`) and test it with `--canonicalize`.
+- [x] Add a **folder** (`hasFolder`). Done: `transpose(transpose(x))` → `x`, `relu(relu(x))` → `relu(x)`. Still to try: `alex.add` of two constants folds to a constant, `x + 0` folds to `x`.
+- [x] Add a **canonicalization pattern** (`hasCanonicalizer`) and test it with `--canonicalize`. Done: normalize transpose dims, swap `relu(transpose(x))` → `transpose(relu(x))`.
 - [ ] Rewrite one pattern with **DRR** (`Pat<>` in TableGen) or **PDLL**.
 
 **Learn:** the greedy pattern driver vs. dialect conversion; how `fold` differs from `canonicalize`.
+
+**Learned (checked on `relu`):**
+- `fold()` never runs on its own. With no pass, `alex-opt` only parses, verifies and prints.
+- `fold()` runs in any pass that folds: `-canonicalize`, dialect conversion (`--convert-alex-to-linalg` folds an illegal op before trying its patterns), the greedy rewriter, `createOrFold`.
+- `getCanonicalizationPatterns()` runs only in `-canonicalize` (or a pass that loads the patterns explicitly). Dialect conversion does not load them.
+- `fold()` can only return an existing value or a constant; a pattern can create new ops.
 
 ### Step 4: Interfaces and types
 - [ ] Implement `InferTypeOpInterface` so result types are inferred.
