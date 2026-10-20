@@ -242,6 +242,12 @@ def argminOp: Alex_Op<"argmin"> {
 }
 
 def reluOp: Alex_Op<"relu"> {
+    let hasVerifier = 1;
+
+    let hasFolder = 1;
+
+    let hasCanonicalizer = 1;
+
     let summary = "Applies the rectified linear unit function to a tensor";
 
     let description = [{
