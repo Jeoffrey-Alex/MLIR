@@ -9,6 +9,7 @@
 
 
 #include "Alex/AlexDialect.h"
+#include "Alex/AlexTypes.h"
 
 #define GET_OP_CLASSES
 #include "Alex/AlexOps.h.inc"
