@@ -859,6 +859,26 @@ public:
   }
 };
 
+// aten.__not__ on !alex.bool -> arith.xori with true in i1
+class ConvertNotOp : public mlir::OpConversionPattern<alex::NotOp> {
+public:
+  using mlir::OpConversionPattern<alex::NotOp>::OpConversionPattern;
+
+  mlir::LogicalResult
+  matchAndRewrite(alex::NotOp op, OpAdaptor adaptor,
+                  mlir::ConversionPatternRewriter &rewriter) const override {
+    // The adaptor holds the converted operand: i1, not !alex.bool.
+    mlir::Value self = adaptor.getSelf();
+
+    rewriter.replaceOpWithNewOp<mlir::arith::XOrIOp>(
+        op, self,
+        mlir::arith::ConstantIntOp::create(rewriter, op.getLoc(), /*value=*/1,
+                                           /*bitwidth=*/1));
+
+    return mlir::success();
+  }
+};
+
 class AlexToArithPass
     : public mlir::PassWrapper<AlexToArithPass,
                                mlir::OperationPass<mlir::ModuleOp>> {
@@ -893,13 +913,46 @@ public:
                          mlir::tensor::TensorDialect, mlir::scf::SCFDialect>();
     // Alex operations must be lowered
     target.addIllegalOp<alex::AddOp, alex::SubOp, alex::MulOp, alex::AddcmulOp,
-                        alex::argminOp>();
+                        alex::argminOp, alex::NotOp>();
+
+    // Type mapping for patterns that change types.
+    mlir::TypeConverter typeConverter;
+
+    // 1. Fallback: every other type stays as it is.
+    typeConverter.addConversion([](mlir::Type type) { return type; });
+
+    // 2. !alex.bool -> i1 (tried first: the last added conversion runs first).
+    typeConverter.addConversion([](alex::BoolType type) -> mlir::Type {
+      return mlir::IntegerType::get(type.getContext(), 1);
+    });
+
+    // 3. Casts that join converted and unconverted values. Without func
+    //    conversion the function signature keeps !alex.bool, so:
+    //    - target: !alex.bool block argument -> i1 operand of the new op
+    //    - source: i1 result of the new op -> !alex.bool for func.return
+    typeConverter.addTargetMaterialization(
+        []( mlir::OpBuilder &builder, mlir::Type resultType,
+           mlir::ValueRange inputs, mlir::Location loc) -> mlir::Value {
+          return mlir::UnrealizedConversionCastOp::create(builder, loc,
+                                                          resultType, inputs)
+              .getResult(0);
+        });
+    typeConverter.addSourceMaterialization(
+        [](mlir::OpBuilder &builder, mlir::Type resultType,
+           mlir::ValueRange inputs, mlir::Location loc) -> mlir::Value {
+          return mlir::UnrealizedConversionCastOp::create(builder, loc,
+                                                          resultType, inputs)
+              .getResult(0);
+        });
 
     mlir::RewritePatternSet patterns(&context);
 
     // Register patterns that perform the actual lowering.
     patterns.add<ConvertAddOp, ConvertConstOp, ConvertSubOp, ConvertMulOp,
                  ConvertAddcmulOp, ConvertArgminOp>(&context);
+
+    // Patterns that change types get the type converter.
+    patterns.add<ConvertNotOp>(typeConverter, &context);
 
     // Apply the conversion and fail the pass if any illegal. Alex operation
     // could not be lowered.

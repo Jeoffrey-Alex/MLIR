@@ -1,6 +1,7 @@
 include "mlir/IR/OpBase.td"
 include "Alex/AlexDialect.td"
 include "mlir/Interfaces/SideEffectInterfaces.td" 
+include "Alex/AlexTypes.td"
 
 
 def IntOrFloatTensor : TensorOf<[AnyTypeOf<[AnyInteger, AnyFloat]>]>;
@@ -296,4 +297,25 @@ def transposeOp: Alex_Op<"transpose",[Pure]>{
     let results = (outs
         IntOrFloatTensor:$result    
     );
+}
+
+def Aten_NotOp : Alex_Op<"aten.__not__",[Pure]> {
+    let summary = "Logical not of a bool, like torch's 'aten::__not__'";
+
+    let description = [{
+        This operation takes a bool operand and returns its logical negation.
+
+        - 'self' is a required '!alex.bool' value.
+        - 'result' is a '!alex.bool' value equal to 'not self'.
+    }];
+
+    let arguments = (ins
+        Alex_BoolType:$self    
+    );
+
+    let results = (outs
+        Alex_BoolType:$result
+    );
+
+    let assemblyFormat = "$self attr-dict `:` qualified(type($self)) `->` qualified(type($result))";
 }

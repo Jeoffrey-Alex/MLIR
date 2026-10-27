@@ -5,6 +5,11 @@ set(LLVM_TARGET_DEFINITIONS Alex/AlexDialect.td)
 mlir_tablegen(Alex/AlexDialect.h.inc -gen-dialect-decls)
 mlir_tablegen(Alex/AlexDialect.cpp.inc -gen-dialect-defs)
 
+set(LLVM_TARGET_DEFINITIONS Alex/AlexTypes.td)
+
+mlir_tablegen(Alex/AlexTypes.h.inc -gen-typedef-decls)
+mlir_tablegen(Alex/AlexTypes.cpp.inc -gen-typedef-defs)
+
 set(LLVM_TARGET_DEFINITIONS Alex/AlexOps.td)
 
 mlir_tablegen(Alex/AlexOps.h.inc -gen-op-decls)

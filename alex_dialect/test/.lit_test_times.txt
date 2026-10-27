@@ -31,3 +31,4 @@
 -1.478195e-04 scalar/add_tensors.mlir
 -1.459122e-04 scalar/add_tensors1.mlir
 -8.795261e-04 transpose/bad.mlir
+-9.918213e-04 aten/not.mlir
