@@ -13,4 +13,5 @@ target_link_libraries(alex-opt
     MLIRSCFDialect
     MLIRMathDialect
     MLIRAlexToArith
+    MLIRAlexTransforms
 )

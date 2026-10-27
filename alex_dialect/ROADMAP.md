@@ -15,11 +15,11 @@ Final goal: contribute to Torch-MLIR, ONNX-MLIR or another MLIR-based project.
 | 2 | Compiler fundamentals | 🟡 Partial | SSA, IR and lowering are used every day. Not yet studied: AST and front ends, optimization theory |
 | 3 | LLVM basics | 🔴 Light | Lowered to the LLVM dialect (assignment 5), but LLVM IR itself hasn't been read or optimized |
 | 4 | MLIR fundamentals | 🟢 Done | Dialect, ops, values, types, regions and blocks (built a `linalg.generic` body by hand) |
-| 5 | MLIR development | 🟡 Partial | ✅ TableGen/ODS, type constraints, optional operands, conversion patterns, verifiers, custom builder, folders, canonicalization patterns, `Pure` trait (`transpose`, `relu`). ❌ Assembly format, interfaces, DRR/PDLL |
-| 6 | MLIR lowering | 🟡 Partial | ✅ `alex` → `arith`, `alex` → `linalg` (`generic`, `elementwise`, broadcast maps, reduction), `tensor.empty`, `linalg.fill`. ❌ Running the full pipeline to LLVM and executing it, bufferization in depth, `affine`, `vector`, `TypeConverter` |
-| 7 | MLIR testing | 🟡 Partial | ✅ lit + FileCheck for the `arith` lowering, failure tests, `-verify-diagnostics` tests for verifiers, `-canonicalize` tests for folders and patterns, pytest for the Python bindings. ❌ `test/linalg/*.mlir` have no `RUN`/`CHECK` lines |
+| 5 | MLIR development | 🟡 Partial | ✅ TableGen/ODS, type constraints, optional operands, conversion patterns, verifiers, custom builder, folders, canonicalization patterns, `Pure` trait (`transpose`, `relu`), `OpRewritePattern` + greedy driver in a standalone transform pass (`-alex-decompose-addcmul`). ❌ Assembly format, interfaces, DRR/PDLL |
+| 6 | MLIR lowering | 🟢 Done | ✅ `alex` → `arith`, `alex` → `linalg` (`generic`, `elementwise`, broadcast maps, reduction, `linalg.index` for `argmin`), `tensor.empty`, `linalg.fill`, `tensor.pad` + `linalg.conv_2d_nchw_fchw` (`conv2D`, in progress), op decomposition (`addcmul` → `mul`/`constant`/`add`). Full pipeline to the LLVM dialect (`one-shot-bufferize` → loops → `cf` → `llvm`) run from Python with `PassManager` and executed with `ExecutionEngine.invoke`, checked against PyTorch for `add`, `transpose` and `arange`; `transpose` also called from C. Optional extras not done: a registered pipeline (`PassPipelineRegistration`), bufferization in depth, `affine`, `vector`, `TypeConverter` |
+| 7 | MLIR testing | 🟡 Partial | ✅ lit + FileCheck for the `arith` lowering, failure tests, `-verify-diagnostics` tests for verifiers, `-canonicalize` tests for folders and patterns, multi-`RUN` tests with `--check-prefix` (`addcmul_decompose_bc.mlir`), pytest for the Python bindings. ❌ `test/linalg/*.mlir` have no `RUN`/`CHECK` lines; `conv2D` has no tests |
 | 8 | Build MLIR projects | 🟡 In progress | This repo: custom ML ops, the `alex-opt` tool, a C API and nanobind Python bindings |
-| 9 | Study existing projects | 🔴 Not started | |
+| 9 | Study existing projects | 🟡 Started | Forked and built Torch-MLIR; exploring its structure and the ATen → Arith lowering |
 | 10 | Open-source contributions | 🔴 Not started | |
 
 ### Project timeline (from git history)
@@ -36,7 +36,10 @@ Final goal: contribute to Torch-MLIR, ONNX-MLIR or another MLIR-based project.
 10. `arange` op and its lowering; `argmin` op lowered to `linalg`.
 11. `relu` op lowered to `linalg.generic` with `arith.maximumf`.
 12. `transpose` op: shape helper, verifier, custom builder, folder (`transpose(transpose(x))` → `x`), canonicalization pattern (normalize dims), `Pure`. See `README_TransposeOp.md`.
-13. Current branch, `relu-canonicalizer`: `relu` verifier (result type must equal input type), folder (`relu(relu(x))` → `relu(x)`), canonicalization pattern (`relu(transpose(x))` → `transpose(relu(x))`, only when the transpose has one use).
+13. `relu-canonicalizer` (merged, PR #17): `relu` verifier (result type must equal input type), folder (`relu(relu(x))` → `relu(x)`), canonicalization pattern (`relu(transpose(x))` → `transpose(relu(x))`, only when the transpose has one use).
+14. `try/2dconv` (unfinished): `conv2D` op (NCHW, `stride`, `padding`) with a verifier, lowered to `tensor.pad` + `linalg.fill` + `linalg.conv_2d_nchw_fchw`. The pattern is not yet registered in `-convert-alex-to-linalg`, and there are no tests.
+15. Transform dialect experiment: tiled `linalg.matmul` with `transform.structured.tile_using_for` (`test/transform/tile_matmul.mlir`, not committed).
+16. Current branch, `decomposition`: new `lib/Transforms/` library (`MLIRAlexTransforms`) with the `-alex-decompose-addcmul` pass, which rewrites `addcmul` into `alex.mul`, `alex.constant` (splat) and `alex.add`. The same-shape case works and lowers through `-convert-alex-to-arith`. Broadcasting is written for the decomposition and for `add`/`sub`/`mul` tensor-tensor lowering, but not yet built or tested.
 
 ---
 
@@ -44,6 +47,11 @@ Final goal: contribute to Torch-MLIR, ONNX-MLIR or another MLIR-based project.
 
 Each step is a small, self-contained task in this repo. Do them on separate
 branches, like the earlier assignments.
+
+### Step 0: Finish the open branches
+- [ ] `decomposition`: build, check `addcmul_2d_ds.mlir` and the new `addcmul_decompose_bc.mlir`, run the full lit suite (the `add`/`sub`/`mul` lowering changed), commit and merge.
+- [ ] `decomposition`: skip the scale multiply when `value == 1.0`.
+- [ ] `try/2dconv`: register `ConvertConv2DOp` and mark `conv2DOp` illegal, fill in `summary`/`description`, add tests (no padding, padding, stride 2, a `-verify-diagnostics` failure case).
 
 ### Step 1: Finish the linalg branch properly (testing)
 - [ ] Add `// RUN:` and `// CHECK:` lines to `test/linalg/linalg.mlir` and `test/linalg/reduction.mlir`.
@@ -65,7 +73,7 @@ branches, like the earlier assignments.
     --reconcile-unrealized-casts
   ```
 - [ ] Translate it to LLVM IR with `mlir-translate --mlir-to-llvmir`, then **read the `.ll` file**.
-- [ ] Execute it with `mlir-runner` or the Python `ExecutionEngine` and confirm it returns `60`.
+- [x] Execute with the Python `ExecutionEngine`. Done for `add`, `transpose` and `arange` (`test/python/`, checked against PyTorch), and for `transpose` from C (`test/transpose/main.c`). Still to add: `reduction` (should return `60`), `relu`, `addcmul`, and the commented-out `argmin` test.
 - [ ] Run `opt -O2` on the `.ll` file and compare the result with the unoptimized version.
 - [ ] Register this sequence as a named pipeline (for example `--alex-to-llvm`) with `PassPipelineRegistration`.
 
@@ -87,6 +95,12 @@ branches, like the earlier assignments.
 - `getCanonicalizationPatterns()` runs only in `-canonicalize` (or a pass that loads the patterns explicitly). Dialect conversion does not load them.
 - `fold()` can only return an existing value or a constant; a pattern can create new ops.
 
+**Learned (checked on `addcmul` decomposition):**
+- Rewriting `alex` → `alex` uses `OpRewritePattern` + `applyPatternsGreedily`: no `ConversionTarget`, no `OpAdaptor`.
+- All match-failure checks must come before the first `create`; a pattern must not change the IR and then return failure.
+- A pass needs three hookups: a `create...Pass()` function outside the anonymous namespace, a CMake library linked into `alex-opt`, and `mlir::registerPass` in `alex-opt.cpp`.
+- Decomposing into existing ops moves the work to their lowering: broadcasting `addcmul` needed broadcasting `add`/`mul`.
+
 ### Step 4: Interfaces and types
 - [ ] Implement `InferTypeOpInterface` so result types are inferred.
 - [ ] Define a custom type (`TypeDef`) and lower it with a **`TypeConverter`**.
@@ -94,7 +108,7 @@ branches, like the earlier assignments.
 
 ### Step 5: Linalg transformations (why lowering to linalg pays off)
 - [ ] Generalize: `--linalg-generalize-named-ops` (`elementwise` → `generic`).
-- [ ] Tile, fuse and vectorize your ops with the **Transform dialect**.
+- [ ] Tile, fuse and vectorize your ops with the **Transform dialect**. Started: tiled `linalg.matmul` (`test/transform/tile_matmul.mlir`). Next: add `RUN`/`CHECK` lines, then tile one of your own ops (`relu`, `conv2D`).
 - [ ] Try an `affine` lowering path (`--convert-linalg-to-affine-loops`) and the affine optimizations.
 
 ### Step 6: A real ML op end to end (project milestone)
@@ -104,6 +118,7 @@ to the correct numbers. Good candidates:
 - `softmax` (reduction + broadcast + elementwise: everything combined)
 - `matmul` (lower to `linalg.matmul`, then tile it)
 - `relu` / `gelu`, or `layernorm`
+- `conv2D` (already started on `try/2dconv`: finish the tests, then add a Python binding and run it)
 
 ---
 
@@ -120,7 +135,7 @@ For each project, write down the dialects, the pass pipeline, how tests are
 organized and how to build and run one test.
 
 ### First contributions (stage 10)
-1. Build Torch-MLIR from source and run its test suite.
+1. Build Torch-MLIR from source and run its test suite. (Forked and built; running the test suite is still to do.)
 2. Read `CONTRIBUTING.md`, the code review process and the CI setup.
 3. Look for issues labelled `good first issue` / `help wanted`.
 4. Start small: fix docs, add missing tests, improve error messages.

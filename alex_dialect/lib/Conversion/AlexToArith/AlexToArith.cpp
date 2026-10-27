@@ -129,12 +129,27 @@ public:
   }
 
   // Tensor operation
-  // create a linalg.elementwise operation
+  // create a linalg.elementwise operation with identity indexing maps
   mlir::LogicalResult
   lowerTensor(AlexOp op, mlir::Value input1, mlir::Value input2,
               mlir::RankedTensorType tensorType,
               mlir::ConversionPatternRewriter &rewriter) const {
-    // Fill the empty tensor with the scalar value.
+    mlir::AffineMap identityMap = mlir::AffineMap::getMultiDimIdentityMap(
+        tensorType.getRank(), rewriter.getContext());
+    mlir::ArrayAttr indexingMaps =
+        rewriter.getAffineMapArrayAttr({identityMap, identityMap, identityMap});
+    return lowerTensorWithMaps(op, input1, input2, tensorType, indexingMaps,
+                               rewriter);
+  }
+
+  // Tensor operation
+  // create a linalg.elementwise operation with the given indexing maps
+  mlir::LogicalResult
+  lowerTensorWithMaps(AlexOp op, mlir::Value input1, mlir::Value input2,
+                      mlir::RankedTensorType tensorType,
+                      mlir::ArrayAttr indexingMaps,
+                      mlir::ConversionPatternRewriter &rewriter) const {
+    // Create the empty result tensor.
     mlir::tensor::EmptyOp resultTensor = mlir::tensor::EmptyOp::create(
         rewriter, op.getLoc(), tensorType.getShape(),
         tensorType.getElementType());
@@ -142,10 +157,6 @@ public:
     mlir::linalg::ElementwiseKindAttr kindAttr =
         mlir::linalg::ElementwiseKindAttr::get(rewriter.getContext(),
                                                ElementwiseKind);
-    mlir::AffineMap identityMap = mlir::AffineMap::getMultiDimIdentityMap(
-        tensorType.getRank(), rewriter.getContext());
-    mlir::ArrayAttr indexingMaps =
-        rewriter.getAffineMapArrayAttr({identityMap, identityMap, identityMap});
     // Create the linalg.elementwise operation.
     mlir::linalg::ElementwiseOp elementwiseOp =
         mlir::linalg::ElementwiseOp::create(
@@ -157,8 +168,31 @@ public:
     return mlir::success();
   }
 
+  // Build the indexing map that reads an operand broadcast to the result rank.
+  // Size-1 dimensions always read index 0, missing leading dimensions are
+  // dropped.
+  mlir::AffineMap getBroadcastMap(mlir::ArrayRef<int64_t> operandShape,
+                                  unsigned resultRank,
+                                  mlir::MLIRContext *context) const {
+    unsigned operandRank = operandShape.size();
+
+    llvm::SmallVector<mlir::AffineExpr> expressions;
+
+    for (unsigned i = 0; i < operandRank; ++i) {
+      unsigned resultDim = resultRank - operandRank + i;
+
+      if (operandShape[i] == 1) {
+        expressions.push_back(mlir::getAffineConstantExpr(0, context));
+      } else {
+        expressions.push_back(mlir::getAffineDimExpr(resultDim, context));
+      }
+    }
+
+    return mlir::AffineMap::get(resultRank, 0, expressions, context);
+  }
+
   // tensor + tensor
-  // Both tensor must have same type
+  // Same type uses identity maps, different shapes are broadcast
   mlir::LogicalResult
   lowerTensorTensor(AlexOp op, OpAdaptor adaptor,
                     mlir::ConversionPatternRewriter &rewriter) const {
@@ -166,11 +200,52 @@ public:
         llvm::cast<mlir::RankedTensorType>(op.getInput1().getType());
     mlir::RankedTensorType input2Type =
         llvm::cast<mlir::RankedTensorType>(op.getInput2().getType());
-    // Elementwise operations require matching tensor types here.
-    if (input1Type != input2Type)
-      return mlir::failure();
-    return lowerTensor(op, adaptor.getInput1(), adaptor.getInput2(), input1Type,
-                       rewriter);
+
+    // Same type: no broadcasting needed.
+    if (input1Type == input2Type)
+      return lowerTensor(op, adaptor.getInput1(), adaptor.getInput2(),
+                         input1Type, rewriter);
+
+    // Broadcasting only changes shapes, element types must match.
+    if (input1Type.getElementType() != input2Type.getElementType())
+      return rewriter.notifyMatchFailure(op, "element types must match");
+
+    // Calculate the broadcasted shape of input1 and input2.
+    llvm::SmallVector<int64_t> broadcastShape;
+
+    if (!mlir::OpTrait::util::getBroadcastedShape(
+            input1Type.getShape(), input2Type.getShape(), broadcastShape)) {
+      return rewriter.notifyMatchFailure(
+          op, "input1 and input2 shapes are not broadcastable");
+    }
+
+    // tensor.empty would need runtime sizes for dynamic dimensions.
+    if (mlir::ShapedType::isDynamicShape(broadcastShape))
+      return rewriter.notifyMatchFailure(
+          op, "dynamic shapes are not supported for broadcasting");
+
+    // The broadcasted type must be the declared result type.
+    mlir::RankedTensorType resultType = mlir::RankedTensorType::get(
+        broadcastShape, input1Type.getElementType());
+    if (op->getResult(0).getType() != resultType)
+      return rewriter.notifyMatchFailure(
+          op, "result type does not match broadcasted shape");
+
+    mlir::MLIRContext *context = rewriter.getContext();
+    unsigned resultRank = broadcastShape.size();
+
+    mlir::AffineMap input1Map =
+        getBroadcastMap(input1Type.getShape(), resultRank, context);
+    mlir::AffineMap input2Map =
+        getBroadcastMap(input2Type.getShape(), resultRank, context);
+    mlir::AffineMap identityMap =
+        mlir::AffineMap::getMultiDimIdentityMap(resultRank, context);
+
+    mlir::ArrayAttr indexingMaps =
+        rewriter.getAffineMapArrayAttr({input1Map, input2Map, identityMap});
+
+    return lowerTensorWithMaps(op, adaptor.getInput1(), adaptor.getInput2(),
+                               resultType, indexingMaps, rewriter);
   }
 
   // Main rewrite function
